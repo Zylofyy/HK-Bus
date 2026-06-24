@@ -1,0 +1,19 @@
+
+.gradle/
+app/build/
+build/
+local.properties
+signing.properties
+release-key.jks
+*.jks
+*.keystore
+../toolchain/
+*.apk
+*.ap_
+*.dex
+
+# Editor files
+.idea/
+*.iml
+.DS_Store
+Thumbs.db

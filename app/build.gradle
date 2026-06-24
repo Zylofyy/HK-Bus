@@ -1,0 +1,65 @@
+plugins {
+    id "com.android.application"
+}
+
+def versionProps = new Properties()
+def versionPropsFile = rootProject.file("version.properties")
+if (versionPropsFile.exists()) {
+    versionPropsFile.withInputStream { versionProps.load(it) }
+}
+
+def appVersionCode = (versionProps["versionCode"] ?: "1") as Integer
+def appVersionName = versionProps["versionName"] ?: "1.0.0"
+def appReleaseId = versionProps["releaseId"] ?: "local"
+def releaseApkName = "hk-bus-arrivals-v${appVersionName}-${appReleaseId}.apk"
+
+android {
+    namespace "com.example.hkbus"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.example.hkbus"
+        minSdk 26
+        targetSdk 35
+        versionCode appVersionCode
+        versionName appVersionName
+    }
+
+    signingConfigs {
+        release {
+            def props = new Properties()
+            def propsFile = rootProject.file("signing.properties")
+            if (propsFile.exists()) {
+                propsFile.withInputStream { props.load(it) }
+            }
+            storeFile props["storeFile"] ? rootProject.file(props["storeFile"]) : null
+            storePassword props["storePassword"]
+            keyAlias props["keyAlias"]
+            keyPassword props["keyPassword"]
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    applicationVariants.configureEach { variant ->
+        variant.outputs.configureEach { output ->
+            if (variant.buildType.name == "release") {
+                outputFileName = releaseApkName
+            }
+        }
+    }
+}
+
+tasks.register("printReleaseVersion") {
+    doLast {
+        println("versionCode=${appVersionCode}")
+        println("versionName=${appVersionName}")
+        println("releaseId=${appReleaseId}")
+        println("apkName=${releaseApkName}")
+    }
+}
