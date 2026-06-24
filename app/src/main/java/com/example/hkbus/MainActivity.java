@@ -149,7 +149,7 @@ public class MainActivity extends Activity {
         iconPill.setBackground(round(selected ? navSelectedSurface() : Color.TRANSPARENT, dp(28), Color.TRANSPARENT));
         ImageView icon = new ImageView(this);
         icon.setImageResource(iconRes);
-        icon.setColorFilter(selected ? BLUE : navMutedText());
+        icon.setColorFilter(selected ? Color.WHITE : navMutedText());
         icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         FrameLayout.LayoutParams ip = new FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER);
         iconPill.addView(icon, ip);
@@ -857,8 +857,9 @@ public class MainActivity extends Activity {
     private int sheetSurface() { return blend(Color.rgb(24, 28, 38), BLUE, 0.18f); }
     private int outline() { return blend(STROKE, BLUE, 0.28f); }
     private int navSurface() { return blend(Color.rgb(226, 231, 240), BLUE, 0.20f); }
-    private int navSelectedSurface() { return blend(Color.WHITE, BLUE, 0.34f); }
+    private int navSelectedSurface() { return blend(Color.rgb(92, 112, 146), BLUE, 0.58f); }
     private int navText() { return Color.rgb(17, 22, 30); }
+    private int menuButtonSurface() { return blend(Color.rgb(226, 232, 242), BLUE, 0.22f); }
     private int navMutedText() { return blend(Color.rgb(58, 65, 80), BLUE, 0.12f); }
 
     private TextView iconSymbolButton(String symbol, int sp) {
@@ -984,6 +985,12 @@ public class MainActivity extends Activity {
                         showUpdateDownloadSheet(finalTag, finalApkName, finalApkUrl);
                     }
                 });
+            } catch (HttpStatusException e) {
+                runOnUiThread(() -> {
+                    check.setEnabled(true);
+                    if (e.code == 404) status.setText("No GitHub releases have been published yet.");
+                    else status.setText("Could not check releases. HTTP " + e.code);
+                });
             } catch (Exception e) {
                 runOnUiThread(() -> {
                     check.setEnabled(true);
@@ -1094,11 +1101,14 @@ public class MainActivity extends Activity {
         c.setRequestProperty("Accept", "application/vnd.github+json");
         c.setRequestProperty("User-Agent", "HK-Bus-Android");
         int code = c.getResponseCode();
-        BufferedReader r = new BufferedReader(new InputStreamReader(code >= 400 ? c.getErrorStream() : c.getInputStream()));
+        java.io.InputStream stream = code >= 400 ? c.getErrorStream() : c.getInputStream();
         StringBuilder sb = new StringBuilder();
-        String line;
-        while ((line = r.readLine()) != null) sb.append(line);
-        if (code >= 400) throw new RuntimeException("HTTP " + code);
+        if (stream != null) {
+            BufferedReader r = new BufferedReader(new InputStreamReader(stream));
+            String line;
+            while ((line = r.readLine()) != null) sb.append(line);
+        }
+        if (code >= 400) throw new HttpStatusException(code, sb.toString());
         return sb.toString();
     }
     private void showInfoSheet(String title, String message) {
@@ -1219,11 +1229,17 @@ public class MainActivity extends Activity {
     }
 
     private Button sheetButton(String label) {
-        Button b = pill(label);
+        Button b = new Button(this);
+        b.setAllCaps(false);
+        b.setText(label);
         b.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
         b.setPadding(dp(20), 0, dp(20), 0);
         b.setTextSize(16);
-        b.setBackground(round(elevatedSurface(), dp(18), Color.TRANSPARENT));
+        b.setTextColor(navText());
+        if (Build.VERSION.SDK_INT >= 21) b.setStateListAnimator(null);
+        b.setMinHeight(0);
+        b.setMinWidth(0);
+        b.setBackground(round(menuButtonSurface(), dp(18), Color.TRANSPARENT));
         return b;
     }
     private void saveBookmark(Bookmark b) {
@@ -1323,6 +1339,16 @@ public class MainActivity extends Activity {
         return "KMB".equals(op) ? "KMB" : "Citybus";
     }
 
+
+    private static class HttpStatusException extends Exception {
+        final int code;
+        final String body;
+        HttpStatusException(int code, String body) {
+            super("HTTP " + code);
+            this.code = code;
+            this.body = body;
+        }
+    }
     static class Route {
         final String operator, route, orig, dest, serviceType;
         Route(String operator, String route, String orig, String dest, String serviceType) {
