@@ -4,6 +4,8 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.DownloadManager;
 import android.content.Context;
+import android.content.BroadcastReceiver;
+import android.content.IntentFilter;
 import android.content.ClipData;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -23,7 +25,6 @@ import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.DragEvent;
 import android.view.Gravity;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
@@ -32,6 +33,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -78,13 +80,18 @@ public class MainActivity extends Activity {
     private FrameLayout navIsland;
     private LinearLayout nav;
     private FrameLayout sheetOverlay;
-    private TextView groupFab;
+    private ImageButton groupFab;
     private TextView topMenu;
     private int tab = 0;
     private SharedPreferences prefs;
     private final List<Route> routes = new ArrayList<>();
     private final Map<String, LinearLayout> previewEtaViews = new HashMap<>();
     private final Map<String, TextView> previewStopViews = new HashMap<>();
+    private final Map<String, ImageButton> trackingButtons = new HashMap<>();
+    private boolean trackingReceiverRegistered = false;
+    private final BroadcastReceiver trackingStoppedReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) { updateTrackingButtons(); }
+    };
     private Location lastLocation;
     private String selectedGroup = "All";
     private boolean groupOrderMode = false;
@@ -97,6 +104,27 @@ public class MainActivity extends Activity {
         maybeAskLocation();
         buildShell();
         loadRoutes();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (!trackingReceiverRegistered) {
+            IntentFilter filter = new IntentFilter(BusTrackingService.ACTION_STOPPED);
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(trackingStoppedReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            else registerReceiver(trackingStoppedReceiver, filter);
+            trackingReceiverRegistered = true;
+        }
+        updateTrackingButtons();
+    }
+
+    @Override
+    protected void onPause() {
+        if (trackingReceiverRegistered) {
+            unregisterReceiver(trackingStoppedReceiver);
+            trackingReceiverRegistered = false;
+        }
+        super.onPause();
     }
 
     private void buildShell() {
@@ -120,7 +148,7 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams np = new FrameLayout.LayoutParams(-1, dp(104), Gravity.BOTTOM);
         root.addView(navIsland, np);
 
-        groupFab = iconSymbolButton("+", 36);
+        groupFab = themedImageButton(R.drawable.ic_plus_round, navSurface(), navText(), Color.TRANSPARENT, dp(22));
         groupFab.setOnClickListener(v -> showCreateGroupDialog(null));
         FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(dp(72), dp(72), Gravity.BOTTOM | Gravity.RIGHT);
         fp.setMargins(0, 0, dp(24), dp(124));
@@ -281,6 +309,7 @@ public class MainActivity extends Activity {
 
         previewEtaViews.clear();
         previewStopViews.clear();
+        trackingButtons.clear();
         for (Bookmark b : visible) {
             LinearLayout box = card();
             box.setOnClickListener(v -> showRouteDetail(b));
@@ -293,6 +322,11 @@ public class MainActivity extends Activity {
             header.setGravity(Gravity.CENTER_VERTICAL);
             TextView title = text(b.route + "  " + opName(b.operator), 25, TEXT, true);
             header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+            ImageButton tracking = trackingButton(b);
+            LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(dp(42), dp(42));
+            tp.setMargins(dp(8), 0, dp(8), 0);
+            header.addView(tracking, tp);
+            trackingButtons.put(b.storageKey(), tracking);
             header.addView(groupPill(b.group));
             box.addView(header);
 
@@ -845,7 +879,7 @@ public class MainActivity extends Activity {
             topMenu.setBackground(round(navSurface(), dp(22), Color.TRANSPARENT));
         }
         if (groupFab != null) {
-            groupFab.setTextColor(navText());
+            groupFab.setColorFilter(navText());
             groupFab.setBackground(round(navSurface(), dp(22), Color.TRANSPARENT));
         }
     }
@@ -870,6 +904,72 @@ public class MainActivity extends Activity {
         return button;
     }
 
+
+    private ImageButton themedImageButton(int iconRes, int fill, int iconColor, int stroke, int radius) {
+        ImageButton b = new ImageButton(this);
+        b.setImageResource(iconRes);
+        b.setColorFilter(iconColor);
+        b.setScaleType(ImageView.ScaleType.CENTER);
+        b.setPadding(dp(10), dp(10), dp(10), dp(10));
+        b.setBackground(round(fill, radius, stroke));
+        if (Build.VERSION.SDK_INT >= 21) b.setStateListAnimator(null);
+        return b;
+    }
+
+    private ImageButton trackingButton(Bookmark bookmark) {
+        ImageButton b = themedImageButton(R.drawable.ic_track_compass, fieldSurface(), BLUE, outline(), dp(21));
+        b.setOnClickListener(v -> {
+            if (isTracking(bookmark)) stopTracking();
+            else startTracking(bookmark);
+        });
+        updateTrackingButton(b, bookmark);
+        return b;
+    }
+
+    private void updateTrackingButtons() {
+        for (Map.Entry<String, ImageButton> entry : trackingButtons.entrySet()) {
+            Bookmark bookmark = Bookmark.parse(entry.getKey());
+            if (bookmark != null) updateTrackingButton(entry.getValue(), bookmark);
+        }
+    }
+
+    private void updateTrackingButton(ImageButton button, Bookmark bookmark) {
+        boolean tracking = isTracking(bookmark);
+        button.setImageResource(tracking ? R.drawable.ic_track_cancel : R.drawable.ic_track_compass);
+        button.setColorFilter(tracking ? Color.WHITE : BLUE);
+        button.setBackground(round(tracking ? BLUE : fieldSurface(), dp(21), tracking ? Color.TRANSPARENT : outline()));
+        button.setContentDescription(tracking ? "Stop live tracking" : "Start live tracking");
+    }
+
+    private boolean isTracking(Bookmark bookmark) {
+        return bookmark != null && bookmark.storageKey().equals(prefs.getString(BusTrackingService.PREF_TRACKING_KEY, ""));
+    }
+
+    private void startTracking(Bookmark bookmark) {
+        if (!ensureNotificationPermission()) return;
+        Intent intent = new Intent(this, BusTrackingService.class)
+                .setAction(BusTrackingService.ACTION_START)
+                .putExtra(BusTrackingService.EXTRA_BOOKMARK, bookmark.serialize());
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent);
+        else startService(intent);
+        prefs.edit().putString(BusTrackingService.PREF_TRACKING_KEY, bookmark.storageKey()).apply();
+        updateTrackingButtons();
+    }
+
+    private void stopTracking() {
+        Intent intent = new Intent(this, BusTrackingService.class).setAction(BusTrackingService.ACTION_CANCEL);
+        startService(intent);
+        prefs.edit().remove(BusTrackingService.PREF_TRACKING_KEY).apply();
+        updateTrackingButtons();
+    }
+
+    private boolean ensureNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 42);
+            return false;
+        }
+        return true;
+    }
     private void showCurrentTab() {
         if (navIsland != null) navIsland.setVisibility(View.VISIBLE);
         if (topMenu != null) topMenu.setVisibility(View.VISIBLE);
@@ -1170,16 +1270,6 @@ public class MainActivity extends Activity {
         sheet.setPadding(dp(22), dp(18), dp(22), dp(22));
         sheet.setBackground(round(sheetSurface(), dp(30), tint(BLUE, 0.38f)));
         sheet.setOnClickListener(v -> {});
-        FrameLayout handleTouch = new FrameLayout(this);
-        TextView handle = new TextView(this);
-        handle.setBackground(round(blend(MUTED, BLUE, 0.22f), dp(2), Color.TRANSPARENT));
-        FrameLayout.LayoutParams handleBar = new FrameLayout.LayoutParams(dp(42), dp(4), Gravity.CENTER);
-        handleTouch.addView(handle, handleBar);
-        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(dp(96), dp(28));
-        hp.gravity = Gravity.CENTER_HORIZONTAL;
-        hp.setMargins(0, 0, 0, dp(8));
-        sheet.addView(handleTouch, hp);
-        attachSheetDrag(sheet, handleTouch);
         sheet.addView(text(title, 24, TEXT, true));
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, -2);
         bp.setMargins(0, dp(16), 0, 0);
@@ -1194,33 +1284,6 @@ public class MainActivity extends Activity {
     }
 
 
-    private void attachSheetDrag(View sheet, View dragHandle) {
-        final float[] startY = new float[1];
-        final float[] startTranslation = new float[1];
-        dragHandle.setOnTouchListener((v, event) -> {
-            switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    sheet.animate().cancel();
-                    startY[0] = event.getRawY();
-                    startTranslation[0] = sheet.getTranslationY();
-                    return true;
-                case MotionEvent.ACTION_MOVE:
-                    float next = Math.max(0, startTranslation[0] + event.getRawY() - startY[0]);
-                    sheet.setTranslationY(next);
-                    return true;
-                case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL:
-                    if (sheet.getTranslationY() > dp(112)) {
-                        dismissSheet();
-                    } else {
-                        sheet.animate().translationY(0).setDuration(180).start();
-                    }
-                    return true;
-                default:
-                    return true;
-            }
-        });
-    }
     private void dismissSheet() {
         if (sheetOverlay != null) {
             root.removeView(sheetOverlay);
