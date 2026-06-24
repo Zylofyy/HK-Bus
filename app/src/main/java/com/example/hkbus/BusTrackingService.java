@@ -128,6 +128,7 @@ public class BusTrackingService extends Service {
                 .setColor(accent)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
+                .setLocalOnly(true)
                 .setShowWhen(true)
                 .setWhen(System.currentTimeMillis())
                 .setProgress(100, progress, false)
@@ -135,10 +136,17 @@ public class BusTrackingService extends Service {
                         Icon.createWithResource(this, R.drawable.ic_track_cancel),
                         "Cancel",
                         cancelPending).build());
+        requestPromotedLiveUpdate(builder);
         applyProgressStyle(builder, progress, accent);
         return builder.build();
     }
 
+
+    private void requestPromotedLiveUpdate(Notification.Builder builder) {
+        try {
+            builder.getClass().getMethod("setRequestPromotedOngoing", boolean.class).invoke(builder, true);
+        } catch (Throwable ignored) {}
+    }
     private void applyProgressStyle(Notification.Builder builder, int progress, int accent) {
         if (Build.VERSION.SDK_INT < 36) return;
         try {
@@ -225,5 +233,5 @@ public class BusTrackingService extends Service {
         return prefs.getInt("themeColor", Color.rgb(10, 132, 255));
     }
 
-    private static String opName(String op) { return "KMB".equals(op) ? "KMB" : "Citybus"; }
+    private static String opName(String op) { if ("KMB".equals(op)) return "KMB"; if ("MTR".equals(op)) return "MTR"; return "Citybus"; }
 }

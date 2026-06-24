@@ -81,7 +81,7 @@ public class MainActivity extends Activity {
     private LinearLayout nav;
     private FrameLayout sheetOverlay;
     private ImageButton groupFab;
-    private TextView topMenu;
+    private ImageButton topMenu;
     private int tab = 0;
     private SharedPreferences prefs;
     private final List<Route> routes = new ArrayList<>();
@@ -134,7 +134,7 @@ public class MainActivity extends Activity {
         content.setPadding(dp(18), dp(34), dp(18), dp(112));
         root.addView(content, new FrameLayout.LayoutParams(-1, -1));
 
-        topMenu = iconSymbolButton("\u22EE", 31);
+        topMenu = themedImageButton(R.drawable.ic_more_vertical, navSurface(), navText(), Color.TRANSPARENT, dp(22));
         topMenu.setOnClickListener(v -> showMainMenuSheet());
         FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(dp(56), dp(56), Gravity.TOP | Gravity.RIGHT);
         mp.setMargins(0, dp(28), dp(18), 0);
@@ -224,6 +224,7 @@ public class MainActivity extends Activity {
         content.addView(search, sp);
 
         ScrollView scroll = new ScrollView(this);
+        applyCardScrollFade(scroll);
         LinearLayout results = new LinearLayout(this);
         results.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(results);
@@ -285,6 +286,7 @@ public class MainActivity extends Activity {
         content.addView(groupControls());
 
         ScrollView scroll = new ScrollView(this);
+        applyCardScrollFade(scroll);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list);
@@ -378,16 +380,34 @@ public class MainActivity extends Activity {
         stops.addView(centerStatus("Loading bus stops..."));
         io.execute(() -> {
             try {
+                updateLocation();
                 List<Stop> routeStops = api.routeStops(b);
+                Stop nearestStop = nearest(routeStops);
                 runOnUiThread(() -> {
                     stops.removeAllViews();
+                    final View[] nearestCard = new View[1];
                     for (Stop s : routeStops) {
+                        boolean isNearest = nearestStop != null && nearestStop.id.equals(s.id);
                         LinearLayout box = card();
-                        box.addView(text(s.seq + ". " + s.name, 18, TEXT, true));
-                        TextView eta = text("Loading arrivals...", 15, MUTED, false);
-                        box.addView(eta);
+                        if (isNearest) box.setBackground(round(surface(), dp(28), BLUE));
+                        LinearLayout stopHeader = new LinearLayout(this);
+                        stopHeader.setGravity(Gravity.CENTER_VERTICAL);
+                        stopHeader.addView(text(s.seq + ". " + s.name, 18, TEXT, true), new LinearLayout.LayoutParams(0, -2, 1));
+                        if (isNearest) stopHeader.addView(nearestPill());
+                        box.addView(stopHeader);
+                        LinearLayout etaRow = etaBoxRow(null);
+                        LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-1, -2);
+                        ep.setMargins(0, dp(10), 0, 0);
+                        box.addView(etaRow, ep);
                         stops.addView(box);
-                        loadEtaInto(b, s, eta, false);
+                        loadEtaRowInto(b, s, etaRow);
+                        if (isNearest) nearestCard[0] = box;
+                    }
+                    if (nearestCard[0] != null) {
+                        scroll.post(() -> {
+                            int target = nearestCard[0].getTop() - Math.max(0, (scroll.getHeight() - nearestCard[0].getHeight()) / 2);
+                            scroll.smoothScrollTo(0, Math.max(0, target));
+                        });
                     }
                 });
             } catch (Exception e) {
@@ -399,6 +419,25 @@ public class MainActivity extends Activity {
         });
     }
 
+
+    private TextView nearestPill() {
+        TextView pill = text("Nearest", 12, Color.WHITE, true);
+        pill.setGravity(Gravity.CENTER);
+        pill.setPadding(dp(12), dp(5), dp(12), dp(5));
+        pill.setBackground(round(BLUE, dp(16), Color.TRANSPARENT));
+        return pill;
+    }
+
+    private void loadEtaRowInto(Bookmark b, Stop s, LinearLayout row) {
+        io.execute(() -> {
+            try {
+                List<String> times = api.etas(b, s);
+                runOnUiThread(() -> renderEtaBoxes(row, times));
+            } catch (Exception e) {
+                runOnUiThread(() -> renderEtaBoxes(row, new ArrayList<>()));
+            }
+        });
+    }
     private void loadRoutes() {
         io.execute(() -> {
             try {
@@ -875,7 +914,7 @@ public class MainActivity extends Activity {
         if (root != null) root.setBackgroundColor(appBackground());
         if (navIsland != null) navIsland.setBackground(round(navSurface(), dp(0), Color.TRANSPARENT));
         if (topMenu != null) {
-            topMenu.setTextColor(navText());
+            topMenu.setColorFilter(navText());
             topMenu.setBackground(round(navSurface(), dp(22), Color.TRANSPARENT));
         }
         if (groupFab != null) {
@@ -905,6 +944,12 @@ public class MainActivity extends Activity {
     }
 
 
+
+    private void applyCardScrollFade(ScrollView scroll) {
+        scroll.setVerticalFadingEdgeEnabled(true);
+        scroll.setFadingEdgeLength(dp(34));
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+    }
     private ImageButton themedImageButton(int iconRes, int fill, int iconColor, int stroke, int radius) {
         ImageButton b = new ImageButton(this);
         b.setImageResource(iconRes);
@@ -1017,10 +1062,6 @@ public class MainActivity extends Activity {
         body.setOrientation(LinearLayout.VERTICAL);
         TextView version = text("Current version: " + currentVersionName(), 16, TEXT, true);
         body.addView(version);
-        TextView repo = text("Updates are checked from github.com/" + UPDATE_REPO + "/releases.", 14, MUTED, false);
-        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2);
-        rp.setMargins(0, dp(8), 0, dp(14));
-        body.addView(repo, rp);
         TextView status = text("", 14, MUTED, false);
         Button check = sheetButton("Check for new release");
         check.setOnClickListener(v -> checkForRelease(status, check));
@@ -1399,7 +1440,9 @@ public class MainActivity extends Activity {
     }
 
     private static String opName(String op) {
-        return "KMB".equals(op) ? "KMB" : "Citybus";
+        if ("KMB".equals(op)) return "KMB";
+        if ("MTR".equals(op)) return "MTR";
+        return "Citybus";
     }
 
 
@@ -1459,11 +1502,28 @@ public class MainActivity extends Activity {
                 JSONObject o = ctb.getJSONObject(i);
                 out.add(new Route("CTB", o.getString("route"), best(o, "orig_en", "orig_tc"), best(o, "dest_en", "dest_tc"), "1"));
             }
+            addMtrRoutes(out);
             return out;
+        }
+
+        private void addMtrRoutes(List<Route> out) {
+            String[][] routes = {
+                    {"506", "Tuen Mun Ferry Pier", "Siu Lun"}, {"K51", "Fu Tai", "Tai Lam"},
+                    {"K51A", "Fu Tai", "So Kwun Wat"}, {"K52", "Yuet Wu Villa", "Lung Kwu Tan"},
+                    {"K52A", "Tuen Mun Station", "Tsang Tsui"}, {"K52P", "Lung Kwu Tan", "Tuen Mun Station"},
+                    {"K53", "Yuen Long Station", "Pok Oi Hospital"}, {"K58", "Fu Tai", "Castle Peak Bay"},
+                    {"K65", "Yuen Long Station", "Lau Fau Shan"}, {"K66", "Long Ping", "Tai Tong"},
+                    {"K68", "Yuen Long Industrial Estate", "Yuen Long Park"}, {"K73", "Tin Shui Wai Town Centre", "Yuen Long West"},
+                    {"K74", "Tin Shui Wai Town Centre", "Au Tau"}, {"K75", "Tin Shui Wai Station", "Hung Fuk Estate"},
+                    {"K75A", "Tin Shui Wai Station", "Tin Heng"}, {"K75P", "Tin Shui Wai Station", "Hung Shui Kiu"},
+                    {"K75S", "Tin Shui Wai Station", "Tin Shui Estate"}, {"K76", "Tin Shui Wai Station", "Wetland Park"}
+            };
+            for (String[] r : routes) out.add(new Route("MTR", r[0], r[1], r[2], "1"));
         }
 
         List<Stop> routeStops(Bookmark b) throws Exception {
             List<Stop> out = new ArrayList<>();
+            if ("MTR".equals(b.operator)) return mtrRouteStops(b);
             JSONArray arr;
             if ("KMB".equals(b.operator)) {
                 String url = "https://data.etabus.gov.hk/v1/transport/kmb/route-stop/" + enc(b.route) + "/" + b.dir + "/" + enc(b.serviceType);
@@ -1486,7 +1546,18 @@ public class MainActivity extends Activity {
             return out;
         }
 
+        private List<Stop> mtrRouteStops(Bookmark b) {
+            List<Stop> out = new ArrayList<>();
+            boolean inbound = b.dir != null && b.dir.startsWith("in");
+            String first = inbound ? b.to : b.from;
+            String second = inbound ? b.from : b.to;
+            out.add(new Stop("MTR:" + b.route + ":1", first, 1, 22.44, 114.02));
+            out.add(new Stop("MTR:" + b.route + ":2", second, 2, 22.44, 114.02));
+            return out;
+        }
+
         List<String> etas(Bookmark b, Stop s) throws Exception {
+            if ("MTR".equals(b.operator)) return new ArrayList<>();
             JSONArray arr;
             if ("KMB".equals(b.operator)) {
                 String url = "https://data.etabus.gov.hk/v1/transport/kmb/eta/" + enc(s.id) + "/" + enc(b.route) + "/" + enc(b.serviceType);
