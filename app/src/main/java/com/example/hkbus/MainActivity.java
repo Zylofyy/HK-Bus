@@ -23,6 +23,7 @@ import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.DragEvent;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
@@ -78,6 +79,7 @@ public class MainActivity extends Activity {
     private LinearLayout nav;
     private FrameLayout sheetOverlay;
     private TextView groupFab;
+    private TextView topMenu;
     private int tab = 0;
     private SharedPreferences prefs;
     private final List<Route> routes = new ArrayList<>();
@@ -99,40 +101,36 @@ public class MainActivity extends Activity {
 
     private void buildShell() {
         root = new FrameLayout(this);
-        root.setBackgroundColor(BG);
         content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(18), dp(72), dp(18), dp(112));
+        content.setPadding(dp(18), dp(34), dp(18), dp(112));
         root.addView(content, new FrameLayout.LayoutParams(-1, -1));
 
-        TextView menu = text("\u22EE", 30, Color.rgb(20, 23, 30), true);
-        menu.setGravity(Gravity.CENTER);
-        menu.setBackground(round(Color.rgb(232, 236, 244), dp(22), Color.TRANSPARENT));
-        menu.setOnClickListener(v -> showMainMenuSheet());
+        topMenu = iconSymbolButton("\u22EE", 31);
+        topMenu.setOnClickListener(v -> showMainMenuSheet());
         FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(dp(56), dp(56), Gravity.TOP | Gravity.RIGHT);
         mp.setMargins(0, dp(28), dp(18), 0);
-        root.addView(menu, mp);
+        root.addView(topMenu, mp);
 
         navIsland = new FrameLayout(this);
-        navIsland.setBackground(round(Color.rgb(226, 231, 240), dp(0), Color.TRANSPARENT));
         nav = new LinearLayout(this);
         nav.setGravity(Gravity.CENTER);
         nav.setPadding(dp(16), dp(8), dp(16), dp(8));
         navIsland.addView(nav, new FrameLayout.LayoutParams(-1, -1));
         FrameLayout.LayoutParams np = new FrameLayout.LayoutParams(-1, dp(104), Gravity.BOTTOM);
         root.addView(navIsland, np);
-        groupFab = text("+", 34, Color.rgb(20, 23, 30), true);
-        groupFab.setGravity(Gravity.CENTER);
-        groupFab.setBackground(round(Color.rgb(232, 236, 244), dp(22), Color.TRANSPARENT));
+
+        groupFab = iconSymbolButton("+", 36);
         groupFab.setOnClickListener(v -> showCreateGroupDialog(null));
         FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(dp(72), dp(72), Gravity.BOTTOM | Gravity.RIGHT);
         fp.setMargins(0, 0, dp(24), dp(124));
         root.addView(groupFab, fp);
+
+        applyThemeSurfaces();
         setContentView(root);
         renderNav();
         showBookmarks();
     }
-
     private void renderNav() {
         nav.removeAllViews();
         nav.addView(navButton("Bookmarks", 0, R.drawable.ic_nav_bookmark), new LinearLayout.LayoutParams(0, -1, 1));
@@ -145,20 +143,26 @@ public class MainActivity extends Activity {
         LinearLayout item = new LinearLayout(this);
         item.setOrientation(LinearLayout.VERTICAL);
         item.setGravity(Gravity.CENTER);
-        item.setPadding(dp(4), dp(4), dp(4), dp(2));
+        item.setPadding(dp(4), 0, dp(4), 0);
 
         FrameLayout iconPill = new FrameLayout(this);
-        iconPill.setBackground(round(selected ? tint(BLUE, 0.26f) : Color.TRANSPARENT, dp(28), Color.TRANSPARENT));
+        iconPill.setBackground(round(selected ? navSelectedSurface() : Color.TRANSPARENT, dp(28), Color.TRANSPARENT));
         ImageView icon = new ImageView(this);
         icon.setImageResource(iconRes);
-        icon.setColorFilter(selected ? BLUE : Color.rgb(65, 72, 86));
-        FrameLayout.LayoutParams ip = new FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER);
+        icon.setColorFilter(selected ? BLUE : navMutedText());
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        FrameLayout.LayoutParams ip = new FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER);
         iconPill.addView(icon, ip);
-        item.addView(iconPill, new LinearLayout.LayoutParams(dp(72), dp(44)));
+        LinearLayout.LayoutParams pillParams = new LinearLayout.LayoutParams(dp(76), dp(44));
+        pillParams.gravity = Gravity.CENTER_HORIZONTAL;
+        item.addView(iconPill, pillParams);
 
-        TextView labelView = text(label, 14, selected ? Color.rgb(18, 22, 30) : Color.rgb(79, 87, 102), true);
+        TextView labelView = text(label, 14, selected ? navText() : navMutedText(), true);
         labelView.setGravity(Gravity.CENTER);
-        item.addView(labelView, new LinearLayout.LayoutParams(-1, -2));
+        labelView.setIncludeFontPadding(false);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(22));
+        lp.setMargins(0, dp(3), 0, 0);
+        item.addView(labelView, lp);
         item.setOnClickListener(x -> {
             tab = index;
             renderNav();
@@ -166,7 +170,6 @@ public class MainActivity extends Activity {
         });
         return item;
     }
-
     private void showRoutes() {
         updateGroupFab();
         content.removeAllViews();
@@ -187,7 +190,7 @@ public class MainActivity extends Activity {
         search.setTextSize(18);
         search.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         search.setPadding(dp(18), 0, dp(18), 0);
-        search.setBackground(round(Color.rgb(16, 20, 30), dp(24), STROKE));
+        search.setBackground(round(fieldSurface(), dp(24), outline()));
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, dp(54));
         sp.setMargins(0, dp(18), 0, dp(12));
         content.addView(search, sp);
@@ -295,7 +298,7 @@ public class MainActivity extends Activity {
 
             TextView direction = text(b.from + "  ->  " + b.to, 15, TEXT, false);
             direction.setPadding(dp(14), dp(10), dp(14), dp(10));
-            direction.setBackground(round(Color.rgb(12, 16, 25), dp(14), STROKE));
+            direction.setBackground(round(fieldSurface(), dp(14), outline()));
             LinearLayout.LayoutParams dpv = new LinearLayout.LayoutParams(-1, -2);
             dpv.setMargins(0, dp(12), 0, dp(10));
             box.addView(direction, dpv);
@@ -315,12 +318,15 @@ public class MainActivity extends Activity {
     }
     private void showRouteDetail(Bookmark b) {
         navIsland.setVisibility(View.GONE);
+        if (topMenu != null) topMenu.setVisibility(View.GONE);
+        if (groupFab != null) groupFab.setVisibility(View.GONE);
         content.removeAllViews();
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         Button back = pill("Back");
         back.setOnClickListener(v -> {
             navIsland.setVisibility(View.VISIBLE);
+            if (topMenu != null) topMenu.setVisibility(View.VISIBLE);
             showBookmarks();
         });
         header.addView(back, new LinearLayout.LayoutParams(dp(86), dp(44)));
@@ -462,7 +468,7 @@ public class MainActivity extends Activity {
         rootRow.addView(groupChip("All", false));
 
         View divider = new View(this);
-        divider.setBackgroundColor(STROKE);
+        divider.setBackgroundColor(outline());
         LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(dp(1), dp(34));
         dividerParams.setMargins(dp(2), 0, dp(10), 0);
         rootRow.addView(divider, dividerParams);
@@ -496,8 +502,8 @@ public class MainActivity extends Activity {
         chip.setGravity(Gravity.CENTER);
         chip.setPadding(dp(16), 0, dp(16), 0);
         chip.setSingleLine(true);
-        int fill = selected ? getGroupColor(label) : Color.argb(160, 22, 33, 48);
-        chip.setBackground(round(fill, dp(21), selected ? Color.TRANSPARENT : STROKE));
+        int fill = selected ? getGroupColor(label) : elevatedSurface();
+        chip.setBackground(round(fill, dp(21), selected ? Color.TRANSPARENT : outline()));
         chip.setOnClickListener(v -> {
             selectedGroup = label;
             showBookmarks();
@@ -517,7 +523,7 @@ public class MainActivity extends Activity {
         chip.setText(group);
         chip.setTag(group);
         chip.setAlpha(0.96f);
-        chip.setBackground(round(getGroupColor(group), dp(21), STROKE));
+        chip.setBackground(round(getGroupColor(group), dp(21), outline()));
         chip.setOnClickListener(v -> {
             selectedGroup = group;
             showBookmarks();
@@ -540,14 +546,14 @@ public class MainActivity extends Activity {
                     v.setBackground(round(blend(getGroupColor(target), Color.WHITE, 0.18f), dp(21), TEXT));
                     return true;
                 case DragEvent.ACTION_DRAG_EXITED:
-                    v.setBackground(round(getGroupColor(target), dp(21), STROKE));
+                    v.setBackground(round(getGroupColor(target), dp(21), outline()));
                     return true;
                 case DragEvent.ACTION_DROP:
                     moveGroupNear(dragged, target, event.getX() > v.getWidth() / 2f);
                     return true;
                 case DragEvent.ACTION_DRAG_ENDED:
                     v.setAlpha(0.96f);
-                    v.setBackground(round(getGroupColor(target), dp(21), STROKE));
+                    v.setBackground(round(getGroupColor(target), dp(21), outline()));
                     return true;
                 default:
                     return true;
@@ -723,7 +729,7 @@ public class MainActivity extends Activity {
             box.setGravity(Gravity.CENTER);
             box.setPadding(dp(8), dp(10), dp(8), dp(10));
             box.setSingleLine(true);
-            box.setBackground(round(Color.rgb(12, 16, 25), dp(14), STROKE));
+            box.setBackground(round(fieldSurface(), dp(14), outline()));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
             if (i > 0) lp.setMargins(dp(8), 0, 0, 0);
             row.addView(box, lp);
@@ -831,7 +837,42 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void applyThemeSurfaces() {
+        if (root != null) root.setBackgroundColor(appBackground());
+        if (navIsland != null) navIsland.setBackground(round(navSurface(), dp(0), Color.TRANSPARENT));
+        if (topMenu != null) {
+            topMenu.setTextColor(navText());
+            topMenu.setBackground(round(navSurface(), dp(22), Color.TRANSPARENT));
+        }
+        if (groupFab != null) {
+            groupFab.setTextColor(navText());
+            groupFab.setBackground(round(navSurface(), dp(22), Color.TRANSPARENT));
+        }
+    }
+
+    private int appBackground() { return blend(BG, BLUE, 0.16f); }
+    private int surface() { return blend(Color.rgb(18, 21, 30), BLUE, 0.13f); }
+    private int elevatedSurface() { return blend(Color.rgb(27, 31, 42), BLUE, 0.17f); }
+    private int fieldSurface() { return blend(Color.rgb(14, 18, 27), BLUE, 0.12f); }
+    private int sheetSurface() { return blend(Color.rgb(24, 28, 38), BLUE, 0.18f); }
+    private int outline() { return blend(STROKE, BLUE, 0.28f); }
+    private int navSurface() { return blend(Color.rgb(226, 231, 240), BLUE, 0.20f); }
+    private int navSelectedSurface() { return blend(Color.WHITE, BLUE, 0.34f); }
+    private int navText() { return Color.rgb(17, 22, 30); }
+    private int navMutedText() { return blend(Color.rgb(58, 65, 80), BLUE, 0.12f); }
+
+    private TextView iconSymbolButton(String symbol, int sp) {
+        TextView button = text(symbol, sp, navText(), true);
+        button.setGravity(Gravity.CENTER);
+        button.setIncludeFontPadding(false);
+        button.setPadding(0, 0, 0, 0);
+        return button;
+    }
+
     private void showCurrentTab() {
+        if (navIsland != null) navIsland.setVisibility(View.VISIBLE);
+        if (topMenu != null) topMenu.setVisibility(View.VISIBLE);
+        applyThemeSurfaces();
         renderNav();
         updateGroupFab();
         if (tab == 0) showBookmarks();
@@ -841,7 +882,8 @@ public class MainActivity extends Activity {
 
 
     private void updateGroupFab() {
-        if (groupFab != null) groupFab.setVisibility(tab == 0 && !groupOrderMode ? View.VISIBLE : View.GONE);
+        boolean detailOpen = navIsland != null && navIsland.getVisibility() != View.VISIBLE;
+        if (groupFab != null) groupFab.setVisibility(tab == 0 && !groupOrderMode && !detailOpen ? View.VISIBLE : View.GONE);
     }
     private TextView pageTitle(String label) {
         TextView title = text(label, 34, TEXT, true);
@@ -1094,7 +1136,7 @@ public class MainActivity extends Activity {
         input.setTextColor(TEXT);
         input.setHintTextColor(MUTED);
         input.setPadding(dp(18), 0, dp(18), 0);
-        input.setBackground(round(Color.rgb(30, 34, 44), dp(18), tint(BLUE, 0.45f)));
+        input.setBackground(round(fieldSurface(), dp(18), tint(BLUE, 0.45f)));
         body.addView(input, new LinearLayout.LayoutParams(-1, dp(58)));
         Button save = sheetButton("Done");
         save.setOnClickListener(v -> {
@@ -1116,14 +1158,18 @@ public class MainActivity extends Activity {
         LinearLayout sheet = new LinearLayout(this);
         sheet.setOrientation(LinearLayout.VERTICAL);
         sheet.setPadding(dp(22), dp(18), dp(22), dp(22));
-        sheet.setBackground(round(Color.rgb(23, 27, 36), dp(30), tint(BLUE, 0.38f)));
+        sheet.setBackground(round(sheetSurface(), dp(30), tint(BLUE, 0.38f)));
         sheet.setOnClickListener(v -> {});
+        FrameLayout handleTouch = new FrameLayout(this);
         TextView handle = new TextView(this);
-        handle.setBackground(round(Color.rgb(101, 110, 128), dp(2), Color.TRANSPARENT));
-        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(dp(42), dp(4));
+        handle.setBackground(round(blend(MUTED, BLUE, 0.22f), dp(2), Color.TRANSPARENT));
+        FrameLayout.LayoutParams handleBar = new FrameLayout.LayoutParams(dp(42), dp(4), Gravity.CENTER);
+        handleTouch.addView(handle, handleBar);
+        LinearLayout.LayoutParams hp = new LinearLayout.LayoutParams(dp(96), dp(28));
         hp.gravity = Gravity.CENTER_HORIZONTAL;
-        hp.setMargins(0, 0, 0, dp(16));
-        sheet.addView(handle, hp);
+        hp.setMargins(0, 0, 0, dp(8));
+        sheet.addView(handleTouch, hp);
+        attachSheetDrag(sheet, handleTouch);
         sheet.addView(text(title, 24, TEXT, true));
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, -2);
         bp.setMargins(0, dp(16), 0, 0);
@@ -1137,6 +1183,34 @@ public class MainActivity extends Activity {
         sheet.animate().translationY(0).setDuration(220).start();
     }
 
+
+    private void attachSheetDrag(View sheet, View dragHandle) {
+        final float[] startY = new float[1];
+        final float[] startTranslation = new float[1];
+        dragHandle.setOnTouchListener((v, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    sheet.animate().cancel();
+                    startY[0] = event.getRawY();
+                    startTranslation[0] = sheet.getTranslationY();
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    float next = Math.max(0, startTranslation[0] + event.getRawY() - startY[0]);
+                    sheet.setTranslationY(next);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    if (sheet.getTranslationY() > dp(112)) {
+                        dismissSheet();
+                    } else {
+                        sheet.animate().translationY(0).setDuration(180).start();
+                    }
+                    return true;
+                default:
+                    return true;
+            }
+        });
+    }
     private void dismissSheet() {
         if (sheetOverlay != null) {
             root.removeView(sheetOverlay);
@@ -1149,7 +1223,7 @@ public class MainActivity extends Activity {
         b.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
         b.setPadding(dp(20), 0, dp(20), 0);
         b.setTextSize(16);
-        b.setBackground(round(Color.rgb(35, 40, 52), dp(18), Color.TRANSPARENT));
+        b.setBackground(round(elevatedSurface(), dp(18), Color.TRANSPARENT));
         return b;
     }
     private void saveBookmark(Bookmark b) {
@@ -1181,7 +1255,7 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(18), dp(16), dp(18), dp(16));
-        box.setBackground(round(Color.rgb(21, 25, 34), dp(28), Color.rgb(38, 44, 58)));
+        box.setBackground(round(surface(), dp(28), outline()));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.setMargins(0, 0, 0, dp(12));
         box.setLayoutParams(lp);
@@ -1211,7 +1285,7 @@ public class MainActivity extends Activity {
         b.setText(s);
         b.setTextColor(TEXT);
         b.setTextSize(14);
-        b.setBackground(round(Color.argb(210, 22, 33, 48), dp(22), BLUE));
+        b.setBackground(round(elevatedSurface(), dp(22), BLUE));
         return b;
     }
 
