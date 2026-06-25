@@ -87,7 +87,7 @@ public class MainActivity extends Activity {
     private final List<Route> routes = new ArrayList<>();
     private final Map<String, LinearLayout> previewEtaViews = new HashMap<>();
     private final Map<String, TextView> previewStopViews = new HashMap<>();
-    private final Map<String, ImageButton> trackingButtons = new HashMap<>();
+    private final Map<String, Button> trackingButtons = new HashMap<>();
     private boolean trackingReceiverRegistered = false;
     private final BroadcastReceiver trackingStoppedReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) { updateTrackingButtons(); }
@@ -134,7 +134,7 @@ public class MainActivity extends Activity {
         content.setPadding(dp(18), dp(34), dp(18), dp(112));
         root.addView(content, new FrameLayout.LayoutParams(-1, -1));
 
-        topMenu = themedImageButton(R.drawable.ic_more_vertical, navSurface(), navText(), Color.TRANSPARENT, dp(22));
+        topMenu = themedImageButton(R.drawable.ic_more_vertical, floatingSurface(), buttonText(), Color.TRANSPARENT, dp(22));
         topMenu.setOnClickListener(v -> showMainMenuSheet());
         FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(dp(56), dp(56), Gravity.TOP | Gravity.RIGHT);
         mp.setMargins(0, dp(28), dp(18), 0);
@@ -148,8 +148,11 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams np = new FrameLayout.LayoutParams(-1, dp(104), Gravity.BOTTOM);
         root.addView(navIsland, np);
 
-        groupFab = themedImageButton(R.drawable.ic_plus_round, navSurface(), navText(), Color.TRANSPARENT, dp(22));
-        groupFab.setOnClickListener(v -> showCreateGroupDialog(null));
+        groupFab = themedImageButton(R.drawable.ic_plus_round, floatingSurface(), buttonText(), Color.TRANSPARENT, dp(22));
+        groupFab.setOnClickListener(v -> {
+            if (tab == 1) showCreateRouteFlow(null);
+            else showCreateGroupDialog(null);
+        });
         FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(dp(72), dp(72), Gravity.BOTTOM | Gravity.RIGHT);
         fp.setMargins(0, 0, dp(24), dp(124));
         root.addView(groupFab, fp);
@@ -177,7 +180,7 @@ public class MainActivity extends Activity {
         iconPill.setBackground(round(selected ? navSelectedSurface() : Color.TRANSPARENT, dp(28), Color.TRANSPARENT));
         ImageView icon = new ImageView(this);
         icon.setImageResource(iconRes);
-        icon.setColorFilter(selected ? Color.WHITE : navMutedText());
+        icon.setColorFilter(selected ? Color.rgb(22, 27, 38) : navMutedText());
         icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         FrameLayout.LayoutParams ip = new FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER);
         iconPill.addView(icon, ip);
@@ -185,7 +188,7 @@ public class MainActivity extends Activity {
         pillParams.gravity = Gravity.CENTER_HORIZONTAL;
         item.addView(iconPill, pillParams);
 
-        TextView labelView = text(label, 14, selected ? navText() : navMutedText(), true);
+        TextView labelView = text(label, 14, selected ? Color.WHITE : navMutedText(), true);
         labelView.setGravity(Gravity.CENTER);
         labelView.setIncludeFontPadding(false);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(22));
@@ -202,14 +205,186 @@ public class MainActivity extends Activity {
         updateGroupFab();
         content.removeAllViews();
         content.addView(pageTitle("Routes"));
-        TextView empty = centerStatus("Routes will appear here later.");
-        content.addView(empty, new LinearLayout.LayoutParams(-1, 0, 1));
+        content.addView(text("Create multi-stop route cards from saved bus routes.", 15, MUTED, false));
+
+        ScrollView scroll = new ScrollView(this);
+        applyCardScrollFade(scroll);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(list);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, 0, 1);
+        lp.setMargins(0, dp(16), 0, 0);
+        content.addView(scroll, lp);
+
+        List<CustomRoute> customRoutes = getCustomRoutes();
+        if (customRoutes.isEmpty()) {
+            list.addView(centerStatus("Tap + to create a route."));
+            return;
+        }
+        for (CustomRoute route : customRoutes) list.addView(customRouteCard(route));
     }
+
+    private View customRouteCard(CustomRoute customRoute) {
+        Bookmark b = customRoute.bookmark();
+        LinearLayout box = card();
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = text(customRoute.name, 22, TEXT, true);
+        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        header.addView(groupPill(opName(b.operator)));
+        box.addView(header);
+        TextView direction = text(customRoute.startName + "  ->  " + customRoute.endName, 15, TEXT, false);
+        direction.setPadding(dp(14), dp(10), dp(14), dp(10));
+        direction.setBackground(round(fieldSurface(), dp(14), outline()));
+        LinearLayout.LayoutParams dpv = new LinearLayout.LayoutParams(-1, -2);
+        dpv.setMargins(0, dp(12), 0, dp(10));
+        box.addView(direction, dpv);
+        LinearLayout etaRow = etaBoxRow(null);
+        box.addView(etaRow);
+        loadEtaRowInto(b, new Stop(customRoute.startStopId, customRoute.startName, customRoute.startSeq, 0, 0), etaRow);
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
+        actions.setPadding(0, dp(12), 0, 0);
+        Button expand = materialButton("Expand");
+        expand.setOnClickListener(v -> showCustomRouteDetail(customRoute));
+        Button edit = materialButton("Edit");
+        edit.setOnClickListener(v -> showCreateRouteFlow(customRoute));
+        actions.addView(expand, new LinearLayout.LayoutParams(0, dp(44), 1));
+        TextView gap = new TextView(this);
+        actions.addView(gap, new LinearLayout.LayoutParams(dp(10), 1));
+        actions.addView(edit, new LinearLayout.LayoutParams(0, dp(44), 1));
+        box.addView(actions);
+        return box;
+    }
+
+    private void showCustomRouteDetail(CustomRoute customRoute) {
+        Bookmark b = customRoute.bookmark();
+        navIsland.setVisibility(View.GONE);
+        if (topMenu != null) topMenu.setVisibility(View.GONE);
+        if (groupFab != null) groupFab.setVisibility(View.GONE);
+        content.removeAllViews();
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        Button back = materialButton("Back");
+        back.setOnClickListener(v -> { navIsland.setVisibility(View.VISIBLE); if (topMenu != null) topMenu.setVisibility(View.VISIBLE); showRoutes(); });
+        header.addView(back, new LinearLayout.LayoutParams(dp(86), dp(42)));
+        TextView title = text("  " + customRoute.name, 24, TEXT, true);
+        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        content.addView(header);
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout stops = new LinearLayout(this);
+        stops.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(stops);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, 0, 1);
+        lp.setMargins(0, dp(18), 0, 0);
+        content.addView(scroll, lp);
+        stops.addView(centerStatus("Loading route..."));
+        io.execute(() -> {
+            try {
+                List<Stop> all = api.routeStops(b);
+                List<Stop> selected = sliceStops(all, customRoute.startStopId, customRoute.endStopId);
+                runOnUiThread(() -> {
+                    stops.removeAllViews();
+                    for (Stop s : selected) {
+                        LinearLayout box = card();
+                        box.addView(text(s.seq + ". " + s.name, 18, TEXT, true));
+                        LinearLayout row = etaBoxRow(null);
+                        LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-1, -2);
+                        ep.setMargins(0, dp(10), 0, 0);
+                        box.addView(row, ep);
+                        stops.addView(box);
+                        loadEtaRowInto(b, s, row);
+                    }
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> { stops.removeAllViews(); stops.addView(centerStatus("Could not load route: " + e.getMessage())); });
+            }
+        });
+    }
+
+
+    private void showCreateRouteFlow(CustomRoute editing) {
+        if (routes.isEmpty()) { showInfoSheet("Routes", "Routes are still loading."); return; }
+        List<Route> choices = new ArrayList<>(routes);
+        Collections.sort(choices, Comparator.comparing((Route r) -> r.route.length()).thenComparing(r -> r.route));
+        int limit = Math.min(choices.size(), 90);
+        String[] labels = new String[limit];
+        for (int i = 0; i < limit; i++) labels[i] = choices.get(i).route + " " + opName(choices.get(i).operator) + "  " + choices.get(i).orig + " -> " + choices.get(i).dest;
+        showOptionSheet("Select Bus Route", labels, (index, label) -> chooseRouteStops(choices.get(index), editing));
+    }
+
+    private void chooseRouteStops(Route route, CustomRoute editing) {
+        Bookmark b = new Bookmark(route.operator, route.route, "outbound", route.serviceType, route.orig, route.dest, "Ungrouped");
+        io.execute(() -> {
+            try {
+                List<Stop> stops = api.routeStops(b);
+                runOnUiThread(() -> chooseStartStop(route, stops, editing));
+            } catch (Exception e) {
+                runOnUiThread(() -> showInfoSheet("Route", "Could not load stops: " + e.getMessage()));
+            }
+        });
+    }
+
+    private void chooseStartStop(Route route, List<Stop> stops, CustomRoute editing) {
+        String[] names = stopOptionLabels(stops);
+        showOptionSheet("Starting Stop", names, (startIndex, label) -> chooseEndStop(route, stops, startIndex, editing));
+    }
+
+    private void chooseEndStop(Route route, List<Stop> stops, int startIndex, CustomRoute editing) {
+        String[] names = stopOptionLabels(stops);
+        showOptionSheet("Ending Stop", names, (endIndex, label) -> {
+            Stop start = stops.get(startIndex);
+            Stop end = stops.get(endIndex);
+            String name = route.route + " " + opName(route.operator);
+            CustomRoute custom = new CustomRoute(editing == null ? String.valueOf(System.currentTimeMillis()) : editing.id, name, route.operator, route.route, "outbound", route.serviceType, start.id, start.name, start.seq, end.id, end.name, end.seq);
+            saveCustomRoute(custom);
+            showRoutes();
+        });
+    }
+
+    private String[] stopOptionLabels(List<Stop> stops) {
+        String[] names = new String[Math.min(stops.size(), 120)];
+        for (int i = 0; i < names.length; i++) names[i] = stops.get(i).seq + ". " + stops.get(i).name;
+        return names;
+    }
+
+    private List<Stop> sliceStops(List<Stop> stops, String startId, String endId) {
+        int start = 0;
+        int end = stops.size() - 1;
+        for (int i = 0; i < stops.size(); i++) {
+            if (stops.get(i).id.equals(startId)) start = i;
+            if (stops.get(i).id.equals(endId)) end = i;
+        }
+        if (start > end) { int tmp = start; start = end; end = tmp; }
+        return new ArrayList<>(stops.subList(start, end + 1));
+    }
+
+    private void saveCustomRoute(CustomRoute customRoute) {
+        Set<String> set = new HashSet<>(prefs.getStringSet("customRoutes", new HashSet<>()));
+        Set<String> next = new HashSet<>();
+        for (String s : set) {
+            CustomRoute existing = CustomRoute.parse(s);
+            if (existing == null || !existing.id.equals(customRoute.id)) next.add(s);
+        }
+        next.add(customRoute.serialize());
+        prefs.edit().putStringSet("customRoutes", next).apply();
+    }
+
+    private List<CustomRoute> getCustomRoutes() {
+        List<CustomRoute> out = new ArrayList<>();
+        for (String s : prefs.getStringSet("customRoutes", new HashSet<>())) {
+            CustomRoute customRoute = CustomRoute.parse(s);
+            if (customRoute != null) out.add(customRoute);
+        }
+        Collections.sort(out, Comparator.comparing(r -> r.name.toLowerCase(Locale.US)));
+        return out;
+    }
+
     private void showSearch() {
         updateGroupFab();
         content.removeAllViews();
         content.addView(pageTitle("Search"));
-        content.addView(text("Find KMB and Citybus routes, then save either direction.", 15, MUTED, false));
+        content.addView(text("Find KMB, Citybus, and MTR Bus routes, then save either direction.", 15, MUTED, false));
         EditText search = new EditText(this);
         search.setSingleLine(true);
         search.setHint("Route number or destination");
@@ -263,17 +438,18 @@ public class MainActivity extends Activity {
         box.addView(text(r.orig + "  ->  " + r.dest, 15, MUTED, false));
 
         LinearLayout actions = new LinearLayout(this);
-        actions.setGravity(Gravity.CENTER_VERTICAL);
+        actions.setOrientation(LinearLayout.VERTICAL);
         actions.setPadding(0, dp(12), 0, 0);
-        Button outbound = pill("Save ->");
+        Button outbound = pill("Save Route in This Direction");
+        outbound.setTextSize(13);
         outbound.setOnClickListener(v -> saveBookmark(new Bookmark(r.operator, r.route, "outbound", r.serviceType, r.orig, r.dest, "Ungrouped")));
-        Button inbound = pill("Save <-");
+        Button inbound = pill("Save Route in Opposite Direction");
+        inbound.setTextSize(13);
         inbound.setOnClickListener(v -> saveBookmark(new Bookmark(r.operator, r.route, "inbound", r.serviceType, r.dest, r.orig, "Ungrouped")));
-        actions.addView(outbound, new LinearLayout.LayoutParams(0, dp(44), 1));
-        LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(dp(10), 1);
-        TextView spacer = new TextView(this);
-        actions.addView(spacer, gap);
-        actions.addView(inbound, new LinearLayout.LayoutParams(0, dp(44), 1));
+        actions.addView(outbound, new LinearLayout.LayoutParams(-1, dp(52)));
+        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(-1, dp(52));
+        ip.setMargins(0, dp(8), 0, 0);
+        actions.addView(inbound, ip);
         box.addView(actions);
         return box;
     }
@@ -324,8 +500,8 @@ public class MainActivity extends Activity {
             header.setGravity(Gravity.CENTER_VERTICAL);
             TextView title = text(b.route + "  " + opName(b.operator), 25, TEXT, true);
             header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-            ImageButton tracking = trackingButton(b);
-            LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(dp(42), dp(42));
+            Button tracking = trackingButton(b);
+            LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-2, dp(32));
             tp.setMargins(dp(8), 0, dp(8), 0);
             header.addView(tracking, tp);
             trackingButtons.put(b.storageKey(), tracking);
@@ -557,7 +733,7 @@ public class MainActivity extends Activity {
         rootRow.addView(scroll, new LinearLayout.LayoutParams(0, dp(48), 1));
 
         if (groupOrderMode) {
-            Button done = pill("Done");
+            Button done = materialButton("Done");
             done.setOnClickListener(v -> {
                 groupOrderMode = false;
                 showBookmarks();
@@ -914,12 +1090,12 @@ public class MainActivity extends Activity {
         if (root != null) root.setBackgroundColor(appBackground());
         if (navIsland != null) navIsland.setBackground(round(navSurface(), dp(0), Color.TRANSPARENT));
         if (topMenu != null) {
-            topMenu.setColorFilter(navText());
-            topMenu.setBackground(round(navSurface(), dp(22), Color.TRANSPARENT));
+            topMenu.setColorFilter(buttonText());
+            topMenu.setBackground(round(floatingSurface(), dp(22), Color.TRANSPARENT));
         }
         if (groupFab != null) {
-            groupFab.setColorFilter(navText());
-            groupFab.setBackground(round(navSurface(), dp(22), Color.TRANSPARENT));
+            groupFab.setColorFilter(buttonText());
+            groupFab.setBackground(round(floatingSurface(), dp(22), Color.TRANSPARENT));
         }
     }
 
@@ -929,9 +1105,11 @@ public class MainActivity extends Activity {
     private int fieldSurface() { return blend(Color.rgb(14, 18, 27), BLUE, 0.12f); }
     private int sheetSurface() { return blend(Color.rgb(24, 28, 38), BLUE, 0.18f); }
     private int outline() { return blend(STROKE, BLUE, 0.28f); }
-    private int navSurface() { return blend(Color.rgb(226, 231, 240), BLUE, 0.20f); }
-    private int navSelectedSurface() { return blend(Color.rgb(92, 112, 146), BLUE, 0.58f); }
-    private int navText() { return Color.rgb(17, 22, 30); }
+    private int navSurface() { return blend(Color.rgb(16, 20, 29), BLUE, 0.36f); }
+    private int navSelectedSurface() { return blend(Color.rgb(210, 220, 244), BLUE, 0.30f); }
+    private int floatingSurface() { return blend(Color.rgb(226, 232, 242), BLUE, 0.20f); }
+    private int buttonText() { return Color.rgb(17, 22, 30); }
+    private int navText() { return Color.WHITE; }
     private int menuButtonSurface() { return blend(Color.rgb(226, 232, 242), BLUE, 0.22f); }
     private int navMutedText() { return blend(Color.rgb(58, 65, 80), BLUE, 0.12f); }
 
@@ -949,6 +1127,28 @@ public class MainActivity extends Activity {
         scroll.setVerticalFadingEdgeEnabled(true);
         scroll.setFadingEdgeLength(dp(34));
         scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        if (Build.VERSION.SDK_INT >= 23) {
+            scroll.setOnScrollChangeListener((v, sx, sy, ox, oy) -> {
+                if (sy > oy) setFabForScroll(false);
+                else if (sy < oy) setFabForScroll(true);
+            });
+        }
+    }
+
+    private void setFabForScroll(boolean visible) {
+        if (groupFab == null || groupFab.getVisibility() == View.GONE || !groupFab.isEnabled()) return;
+        groupFab.animate().cancel();
+        groupFab.animate()
+                .alpha(visible ? 1f : 0f)
+                .translationY(visible ? 0 : dp(22))
+                .setDuration(140)
+                .withStartAction(() -> {
+                    if (visible) groupFab.setVisibility(View.VISIBLE);
+                })
+                .withEndAction(() -> {
+                    if (!visible) groupFab.setVisibility(View.INVISIBLE);
+                })
+                .start();
     }
     private ImageButton themedImageButton(int iconRes, int fill, int iconColor, int stroke, int radius) {
         ImageButton b = new ImageButton(this);
@@ -961,8 +1161,10 @@ public class MainActivity extends Activity {
         return b;
     }
 
-    private ImageButton trackingButton(Bookmark bookmark) {
-        ImageButton b = themedImageButton(R.drawable.ic_track_compass, fieldSurface(), BLUE, outline(), dp(21));
+    private Button trackingButton(Bookmark bookmark) {
+        Button b = materialButton("Track");
+        b.setTextSize(12);
+        b.setPadding(dp(14), 0, dp(14), 0);
         b.setOnClickListener(v -> {
             if (isTracking(bookmark)) stopTracking();
             else startTracking(bookmark);
@@ -972,17 +1174,17 @@ public class MainActivity extends Activity {
     }
 
     private void updateTrackingButtons() {
-        for (Map.Entry<String, ImageButton> entry : trackingButtons.entrySet()) {
+        for (Map.Entry<String, Button> entry : trackingButtons.entrySet()) {
             Bookmark bookmark = Bookmark.parse(entry.getKey());
             if (bookmark != null) updateTrackingButton(entry.getValue(), bookmark);
         }
     }
 
-    private void updateTrackingButton(ImageButton button, Bookmark bookmark) {
+    private void updateTrackingButton(Button button, Bookmark bookmark) {
         boolean tracking = isTracking(bookmark);
-        button.setImageResource(tracking ? R.drawable.ic_track_cancel : R.drawable.ic_track_compass);
-        button.setColorFilter(tracking ? Color.WHITE : BLUE);
-        button.setBackground(round(tracking ? BLUE : fieldSurface(), dp(21), tracking ? Color.TRANSPARENT : outline()));
+        button.setText(tracking ? "Cancel" : "Track");
+        button.setTextColor(tracking ? Color.WHITE : buttonText());
+        button.setBackground(round(tracking ? BLUE : menuButtonSurface(), dp(16), Color.TRANSPARENT));
         button.setContentDescription(tracking ? "Stop live tracking" : "Start live tracking");
     }
 
@@ -1029,7 +1231,13 @@ public class MainActivity extends Activity {
 
     private void updateGroupFab() {
         boolean detailOpen = navIsland != null && navIsland.getVisibility() != View.VISIBLE;
-        if (groupFab != null) groupFab.setVisibility(tab == 0 && !groupOrderMode && !detailOpen ? View.VISIBLE : View.GONE);
+        if (groupFab != null) {
+            boolean visible = (tab == 0 || tab == 1) && !groupOrderMode && !detailOpen;
+            groupFab.setVisibility(visible ? View.VISIBLE : View.GONE);
+            groupFab.setAlpha(visible ? 1f : 0f);
+            groupFab.setTranslationY(0);
+            groupFab.setEnabled(visible);
+        }
     }
     private TextView pageTitle(String label) {
         TextView title = text(label, 34, TEXT, true);
@@ -1273,7 +1481,15 @@ public class MainActivity extends Activity {
             lp.setMargins(0, 0, 0, dp(8));
             body.addView(option, lp);
         }
-        showBottomSheet(title, body);
+        if (options.length > 7) {
+            ScrollView scroll = new ScrollView(this);
+            scroll.setFillViewport(false);
+            scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+            scroll.addView(body);
+            showBottomSheet(title, scroll);
+        } else {
+            showBottomSheet(title, body);
+        }
     }
 
     private void showTextInputSheet(String title, String initial, String hint, TextHandler handler) {
@@ -1314,6 +1530,9 @@ public class MainActivity extends Activity {
         sheet.addView(text(title, 24, TEXT, true));
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, -2);
         bp.setMargins(0, dp(16), 0, 0);
+        if (body instanceof ScrollView) {
+            bp.height = Math.min(dp(420), Math.round(getResources().getDisplayMetrics().heightPixels * 0.62f));
+        }
         sheet.addView(body, bp);
 
         FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
@@ -1332,6 +1551,21 @@ public class MainActivity extends Activity {
         }
     }
 
+    private Button materialButton(String label) {
+        Button b = new Button(this);
+        b.setAllCaps(false);
+        b.setText(label);
+        b.setGravity(Gravity.CENTER);
+        b.setPadding(dp(18), 0, dp(18), 0);
+        b.setTextSize(15);
+        b.setTextColor(buttonText());
+        if (Build.VERSION.SDK_INT >= 21) b.setStateListAnimator(null);
+        b.setMinHeight(0);
+        b.setMinWidth(0);
+        b.setBackground(round(menuButtonSurface(), dp(28), Color.TRANSPARENT));
+        return b;
+    }
+
     private Button sheetButton(String label) {
         Button b = new Button(this);
         b.setAllCaps(false);
@@ -1339,11 +1573,11 @@ public class MainActivity extends Activity {
         b.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT);
         b.setPadding(dp(20), 0, dp(20), 0);
         b.setTextSize(16);
-        b.setTextColor(navText());
+        b.setTextColor(buttonText());
         if (Build.VERSION.SDK_INT >= 21) b.setStateListAnimator(null);
         b.setMinHeight(0);
         b.setMinWidth(0);
-        b.setBackground(round(menuButtonSurface(), dp(18), Color.TRANSPARENT));
+        b.setBackground(round(menuButtonSurface(), dp(28), Color.TRANSPARENT));
         return b;
     }
     private void saveBookmark(Bookmark b) {
@@ -1462,6 +1696,24 @@ public class MainActivity extends Activity {
         }
     }
 
+
+    static class CustomRoute {
+        final String id, name, operator, route, dir, serviceType, startStopId, startName, endStopId, endName;
+        final int startSeq, endSeq;
+        CustomRoute(String id, String name, String operator, String route, String dir, String serviceType, String startStopId, String startName, int startSeq, String endStopId, String endName, int endSeq) {
+            this.id = clean(id); this.name = clean(name); this.operator = operator; this.route = route; this.dir = dir; this.serviceType = serviceType;
+            this.startStopId = clean(startStopId); this.startName = clean(startName); this.startSeq = startSeq; this.endStopId = clean(endStopId); this.endName = clean(endName); this.endSeq = endSeq;
+        }
+        Bookmark bookmark() { return new Bookmark(operator, route, dir, serviceType, startName, endName, "Ungrouped"); }
+        String serialize() { return id + "|" + name + "|" + operator + "|" + route + "|" + dir + "|" + serviceType + "|" + startStopId + "|" + startName + "|" + startSeq + "|" + endStopId + "|" + endName + "|" + endSeq; }
+        static CustomRoute parse(String s) {
+            String[] p = s.split("\\|", -1);
+            if (p.length < 12) return null;
+            try { return new CustomRoute(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], Integer.parseInt(p[8]), p[9], p[10], Integer.parseInt(p[11])); } catch (Exception e) { return null; }
+        }
+        static String clean(String value) { return value == null ? "" : value.replace("|", " "); }
+    }
+
     static class Bookmark {
         final String operator, route, dir, serviceType, from, to, group;
         Bookmark(String operator, String route, String dir, String serviceType, String from, String to, String group) {
@@ -1508,15 +1760,32 @@ public class MainActivity extends Activity {
 
         private void addMtrRoutes(List<Route> out) {
             String[][] routes = {
-                    {"506", "Tuen Mun Ferry Pier", "Siu Lun"}, {"K51", "Fu Tai", "Tai Lam"},
-                    {"K51A", "Fu Tai", "So Kwun Wat"}, {"K52", "Yuet Wu Villa", "Lung Kwu Tan"},
-                    {"K52A", "Tuen Mun Station", "Tsang Tsui"}, {"K52P", "Lung Kwu Tan", "Tuen Mun Station"},
-                    {"K53", "Yuen Long Station", "Pok Oi Hospital"}, {"K58", "Fu Tai", "Castle Peak Bay"},
-                    {"K65", "Yuen Long Station", "Lau Fau Shan"}, {"K66", "Long Ping", "Tai Tong"},
-                    {"K68", "Yuen Long Industrial Estate", "Yuen Long Park"}, {"K73", "Tin Shui Wai Town Centre", "Yuen Long West"},
-                    {"K74", "Tin Shui Wai Town Centre", "Au Tau"}, {"K75", "Tin Shui Wai Station", "Hung Fuk Estate"},
-                    {"K75A", "Tin Shui Wai Station", "Tin Heng"}, {"K75P", "Tin Shui Wai Station", "Hung Shui Kiu"},
-                    {"K75S", "Tin Shui Wai Station", "Tin Shui Estate"}, {"K76", "Tin Shui Wai Station", "Wetland Park"}
+                    {"506", "Tuen Mun Ferry Pier", "Siu Lun / Tuen Mun Station"},
+                    {"K12", "Tai Po Market Station", "Eightland Garden"},
+                    {"K14", "Tai Po Mega Mall", "Tai Po Market Station"},
+                    {"K17", "Tai Po Market Station", "Fu Shin"},
+                    {"K18", "Tai Po Market Station", "Kwong Fuk"},
+                    {"K51", "Fu Tai", "Tai Lam / Siu Hong Station"},
+                    {"K51A", "Fu Tai", "So Kwun Wat"},
+                    {"K52", "Yuet Wu Villa / LR Tuen Mun Stop", "Lung Kwu Tan"},
+                    {"K52A", "Tuen Mun Station", "Tsang Tsui"},
+                    {"K52P", "Lung Kwu Tan", "Tuen Mun Station"},
+                    {"K53", "Tuen Mun Station", "So Kwun Wat circular"},
+                    {"K53S", "Tuen Mun Station", "Yip Wong Estate circular"},
+                    {"K54", "Wo Tin Estate", "Tuen Mun Town Centre circular"},
+                    {"K54A", "Wo Tin Estate", "Siu Hong Station"},
+                    {"K58", "Fu Tai", "So Kwun Wat"},
+                    {"K65", "Yuen Long Station", "Lau Fau Shan"},
+                    {"K65A", "Tin Shui Wai Station", "Lau Fau Shan"},
+                    {"K66", "Long Ping", "Tai Tong / Nam Hang Pai"},
+                    {"K68", "Yuen Long Industrial Estate", "Yuen Long Park circular"},
+                    {"K73", "Tin Heng / Tin Yan", "Yuen Long West"},
+                    {"K74", "Tin Shui Wai Town Centre", "Au Tau circular"},
+                    {"K75A", "Tin Shui Wai Station", "Hung Shui Kiu circular"},
+                    {"K75P", "Tin Shui", "Hung Shui Kiu circular"},
+                    {"K75S", "Tin Shui Wai Station", "Hung Fuk Estate"},
+                    {"K76", "Tin Heng", "Tin Shui Wai Station"},
+                    {"K76S", "Wetland Park Road", "Tin Shing Court / Tin Shui Wai Station"}
             };
             for (String[] r : routes) out.add(new Route("MTR", r[0], r[1], r[2], "1"));
         }
@@ -1546,18 +1815,49 @@ public class MainActivity extends Activity {
             return out;
         }
 
-        private List<Stop> mtrRouteStops(Bookmark b) {
+        private List<Stop> mtrRouteStops(Bookmark b) throws Exception {
+            JSONObject schedule = mtrSchedule(b.route);
+            JSONArray arr = schedule.getJSONArray("busStop");
             List<Stop> out = new ArrayList<>();
-            boolean inbound = b.dir != null && b.dir.startsWith("in");
-            String first = inbound ? b.to : b.from;
-            String second = inbound ? b.from : b.to;
-            out.add(new Stop("MTR:" + b.route + ":1", first, 1, 22.44, 114.02));
-            out.add(new Stop("MTR:" + b.route + ":2", second, 2, 22.44, 114.02));
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject stop = arr.getJSONObject(i);
+                String id = stop.optString("busStopId", b.route + ":" + (i + 1));
+                out.add(new Stop(id, id, i + 1, 0, 0));
+            }
             return out;
         }
 
+        private List<String> mtrEtas(Bookmark b, Stop s) throws Exception {
+            JSONArray stops = mtrSchedule(b.route).getJSONArray("busStop");
+            for (int i = 0; i < stops.length(); i++) {
+                JSONObject stop = stops.getJSONObject(i);
+                if (!s.id.equals(stop.optString("busStopId"))) continue;
+                JSONArray buses = stop.optJSONArray("bus");
+                List<String> times = new ArrayList<>();
+                if (buses == null) return times;
+                for (int j = 0; j < buses.length() && times.size() < 3; j++) {
+                    JSONObject bus = buses.getJSONObject(j);
+                    String label = bus.optString("arrivalTimeText", "");
+                    if (label.length() == 0) label = bus.optString("departureTimeText", "");
+                    if (label.length() == 0) {
+                        int seconds = bus.optInt("arrivalTimeInSecond", 108000);
+                        if (seconds <= 0) label = "Due";
+                        else if (seconds < 108000) label = Math.max(1, Math.round(seconds / 60f)) + " min";
+                    }
+                    label = label.replace("Arriving / Departed", "Due").replace("Departing / Departed", "Due").replace(" minutes", " min");
+                    if (label.length() > 0) times.add(label);
+                }
+                return times;
+            }
+            return new ArrayList<>();
+        }
+
+        private JSONObject mtrSchedule(String routeName) throws Exception {
+            return new JSONObject(post("https://rt.data.gov.hk/v1/transport/mtr/bus/getSchedule", "{\"language\":\"en\",\"routeName\":\"" + routeName + "\"}"));
+        }
+
         List<String> etas(Bookmark b, Stop s) throws Exception {
-            if ("MTR".equals(b.operator)) return new ArrayList<>();
+            if ("MTR".equals(b.operator)) return mtrEtas(b, s);
             JSONArray arr;
             if ("KMB".equals(b.operator)) {
                 String url = "https://data.etabus.gov.hk/v1/transport/kmb/eta/" + enc(s.id) + "/" + enc(b.route) + "/" + enc(b.serviceType);
@@ -1611,6 +1911,25 @@ public class MainActivity extends Activity {
 
         private static String enc(String s) throws Exception {
             return URLEncoder.encode(s, "UTF-8").replace("+", "%20");
+        }
+
+        private static String post(String u, String body) throws Exception {
+            HttpURLConnection c = (HttpURLConnection) new URL(u).openConnection();
+            c.setConnectTimeout(12000);
+            c.setReadTimeout(12000);
+            c.setRequestMethod("POST");
+            c.setDoOutput(true);
+            c.setRequestProperty("Accept", "application/json");
+            c.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            byte[] bytes = body.getBytes("UTF-8");
+            c.getOutputStream().write(bytes);
+            int code = c.getResponseCode();
+            BufferedReader r = new BufferedReader(new InputStreamReader(code >= 400 ? c.getErrorStream() : c.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = r.readLine()) != null) sb.append(line);
+            if (code >= 400) throw new RuntimeException("HTTP " + code);
+            return sb.toString();
         }
 
         private static String get(String u) throws Exception {

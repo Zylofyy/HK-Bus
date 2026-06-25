@@ -137,6 +137,7 @@ public class BusTrackingService extends Service {
                         "Cancel",
                         cancelPending).build());
         requestPromotedLiveUpdate(builder);
+        setShortCriticalText(builder, next);
         applyProgressStyle(builder, progress, accent);
         return builder.build();
     }
@@ -147,6 +148,12 @@ public class BusTrackingService extends Service {
             builder.getClass().getMethod("setRequestPromotedOngoing", boolean.class).invoke(builder, true);
         } catch (Throwable ignored) {}
     }
+    private void setShortCriticalText(Notification.Builder builder, String text) {
+        try {
+            builder.getClass().getMethod("setShortCriticalText", CharSequence.class).invoke(builder, text);
+        } catch (Throwable ignored) {}
+    }
+
     private void applyProgressStyle(Notification.Builder builder, int progress, int accent) {
         if (Build.VERSION.SDK_INT < 36) return;
         try {
@@ -154,7 +161,6 @@ public class BusTrackingService extends Service {
             Object style = styleClass.getConstructor().newInstance();
             styleClass.getMethod("setProgress", int.class).invoke(style, progress);
             styleClass.getMethod("setStyledByProgress", boolean.class).invoke(style, true);
-            styleClass.getMethod("setProgressTrackerIcon", Icon.class).invoke(style, Icon.createWithResource(this, R.drawable.ic_track_compass));
 
             Class<?> segmentClass = Class.forName("android.app.Notification$ProgressStyle$Segment");
             Object segment = segmentClass.getConstructor(int.class).newInstance(100);
