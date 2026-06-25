@@ -608,8 +608,38 @@ final class MtrBusStops {
         MAP.put("K76-U010", new Info("K76-U010", "Tin Heng", 22.469006, 113.999661));
         MAP.put("K76-U020", new Info("K76-U020", "Yat Tam House, Tin Yat Estate", 22.468178, 113.999383));
         MAP.put("K76-U030", new Info("K76-U030", "Yan Fu House, Tin Fu Court", 22.464353, 113.997442));
-        MAP.put("K76-U040", new Info("K76-U040", "Tin Shing Court (MTR Tin Shui Wai Station) K76-U050 22.446556", 22.446864, 114.002819));
+        MAP.put("K76-U040", new Info("K76-U040", "Tin Shing Court (MTR Tin Shui Wai Station)", 22.446864, 114.002819));
     }
-    static Info get(String id) { return MAP.get(id); }
+    static Info get(String id) {
+        Info exact = MAP.get(id);
+        if (exact != null) return exact;
+        for (String candidate : variants(id)) {
+            Info info = MAP.get(candidate);
+            if (info != null) return info;
+        }
+        return null;
+    }
+
+    private static List<String> variants(String id) {
+        List<String> out = new ArrayList<>();
+        if (id == null) return out;
+        addVariant(out, id.replace("-nU", "-U").replace("-nD", "-D"));
+        addVariant(out, id.replace("-U", "-nU").replace("-D", "-nD"));
+        int dash = id.indexOf('-');
+        if (dash > 0) {
+            String route = id.substring(0, dash);
+            String stop = id.substring(dash);
+            while (route.length() > 1 && Character.isLetter(route.charAt(route.length() - 1))) {
+                route = route.substring(0, route.length() - 1);
+                addVariant(out, route + stop);
+                addVariant(out, (route + stop).replace("-U", "-nU").replace("-D", "-nD"));
+            }
+        }
+        return out;
+    }
+
+    private static void addVariant(List<String> out, String value) {
+        if (value != null && value.length() > 0 && !out.contains(value)) out.add(value);
+    }
     static List<Info> all() { return new ArrayList<>(MAP.values()); }
 }

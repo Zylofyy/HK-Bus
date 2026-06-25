@@ -33,6 +33,7 @@ import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
+import android.view.animation.DecelerateInterpolator;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -40,6 +41,7 @@ import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -66,6 +68,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.Set;
+import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -169,7 +172,7 @@ private int tab = 0;
         topMenu = themedImageButton(R.drawable.ic_more_vertical, floatingSurface(), buttonText(), Color.TRANSPARENT, dp(18));
         topMenu.setOnClickListener(v -> showMainMenuSheet());
         FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP | Gravity.RIGHT);
-        mp.setMargins(0, dp(28), dp(18), 0);
+        mp.setMargins(0, dp(34), dp(18), 0);
         root.addView(topMenu, mp);
 
         navIsland = new FrameLayout(this);
@@ -279,10 +282,11 @@ private int tab = 0;
     }
 
     private void generateCustomRoutePath(CustomRoute customRoute, Stop start, Stop end) {
-        showLoadingSheet("Finding Route", "Finding the shortest bus path...");
+        RouteSearchProgress progressView = showRouteSearchProgressSheet();
         io.execute(() -> {
             try {
-                List<CustomRouteLeg> legs = findShortestBusPath(start, end);
+                List<CustomRouteLeg> legs = findShortestBusPath(start, end, (percent, message) ->
+                        runOnUiThread(() -> progressView.update(percent, message)));
                 runOnUiThread(() -> {
                     dismissSheet();
                     if (legs.isEmpty()) {
@@ -294,9 +298,29 @@ private int tab = 0;
                     showCustomRouteEditor(customRoute);
                 });
             } catch (Exception e) {
-                runOnUiThread(() -> showInfoSheet("Route", "Could not generate route: " + e.getMessage()));
+                runOnUiThread(() -> {
+                    dismissSheet();
+                    showInfoSheet("Route", "Could not generate route: " + e.getMessage());
+                });
             }
         });
+    }
+
+    private RouteSearchProgress showRouteSearchProgressSheet() {
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        TextView status = text("Searching shortest bus path (0%)", 16, MUTED, false);
+        status.setGravity(Gravity.CENTER);
+        status.setPadding(dp(12), dp(14), dp(12), dp(14));
+        body.addView(status, new LinearLayout.LayoutParams(-1, -2));
+        ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        bar.setMax(100);
+        bar.setProgress(0);
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(12));
+        bp.setMargins(0, dp(4), 0, dp(4));
+        body.addView(bar, bp);
+        showBottomSheet("Finding Route", body);
+        return new RouteSearchProgress(status, bar);
     }
 
     private View customRouteCard(CustomRoute customRoute) {
@@ -459,8 +483,10 @@ private int tab = 0;
     private void showCustomRouteLegMenu(CustomRoute customRoute, int index) {
         showOptionSheet("Bus Route", new String[]{"Remove Bus Route", "Add Bus Route Above", "Add Bus Route Below"}, (choiceIndex, choice) -> {
             if ("Remove Bus Route".equals(choice)) {
-                if (index >= 0 && index < customRoute.legs.size()) customRoute.legs.remove(index);
-                showCustomRouteEditor(customRoute);
+                showDeleteConfirmationSheet("Remove Bus Route", "Remove this bus route from the journey?", () -> {
+                    if (index >= 0 && index < customRoute.legs.size()) customRoute.legs.remove(index);
+                    showCustomRouteEditor(customRoute);
+                });
             } else if ("Add Bus Route Above".equals(choice)) {
                 beginAddRouteLegAt(customRoute, Math.max(0, index));
             } else if ("Add Bus Route Below".equals(choice)) {
@@ -533,62 +559,100 @@ private int tab = 0;
         return best;
     }
 
-    private List<CustomRouteLeg> findShortestBusPath(Stop start, Stop end) throws Exception {
-        List<RoutePattern> patterns = loadRoutePatterns();
+    private List<CustomRouteLeg> findShortestBusPath(Stop start, Stop end, RouteSearchProgressHandler progress) throws Exception {
+        if (progress != null) progress.onProgress(1, "Loading route graph");
+        List<RoutePattern> patterns = loadRoutePatterns(progress);
+        if (progress != null) progress.onProgress(62, "Indexing nearby stops");
         Map<String, List<PatternStop>> grid = buildPatternGrid(patterns);
         PriorityQueue<PathState> queue = new PriorityQueue<>((a, b) -> {
             if (a.transfers != b.transfers) return a.transfers - b.transfers;
             if (a.stops != b.stops) return a.stops - b.stops;
             return a.legs.size() - b.legs.size();
         });
-        for (PatternStop candidate : nearbyPatternStops(grid, start, 450)) {
-            RoutePattern pattern = patterns.get(candidate.patternIndex);
-            if (distanceMeters(pattern.stops.get(candidate.stopIndex), start) > 450) continue;
-            if (candidate.stopIndex < pattern.stops.size() - 1) {
-                queue.add(new PathState(candidate.patternIndex, candidate.stopIndex, 0, 0, new ArrayList<>()));
-            }
-        }
+        seedPathQueue(queue, patterns, grid, start, 650);
+        if (queue.isEmpty()) seedPathQueue(queue, patterns, grid, start, 1000);
+        if (progress != null) progress.onProgress(70, "Checking direct routes");
         Map<String, Integer> best = new HashMap<>();
         int explored = 0;
-        while (!queue.isEmpty() && explored < 12000) {
+        int maxExplored = 24000;
+        while (!queue.isEmpty() && explored < maxExplored) {
             explored++;
+            if (progress != null && explored % 250 == 0) {
+                int percent = Math.min(98, 70 + Math.round(explored * 28f / maxExplored));
+                progress.onProgress(percent, "Checking transfer options");
+            }
             PathState state = queue.poll();
             String key = state.patternIndex + ":" + state.stopIndex + ":" + state.transfers;
             Integer prev = best.get(key);
             if (prev != null && prev <= state.stops) continue;
             best.put(key, state.stops);
             RoutePattern pattern = patterns.get(state.patternIndex);
-            int endIndex = firstReachableIndex(pattern, end, state.stopIndex + 1, 450);
+            int endIndex = firstReachableIndex(pattern, end, state.stopIndex + 1, 650);
             if (endIndex >= 0) {
                 List<CustomRouteLeg> legs = new ArrayList<>(state.legs);
                 legs.add(legFrom(pattern, state.stopIndex, endIndex));
+                if (progress != null) progress.onProgress(100, "Route found");
                 return legs;
             }
-            if (state.transfers >= 2) continue;
+            if (state.transfers >= 3) continue;
             for (int alight = state.stopIndex + 1; alight < pattern.stops.size(); alight++) {
                 Stop transferStop = pattern.stops.get(alight);
                 if (transferStop.lat == 0 && transferStop.lon == 0) continue;
                 int rideStops = alight - state.stopIndex;
                 List<CustomRouteLeg> ridden = new ArrayList<>(state.legs);
                 ridden.add(legFrom(pattern, state.stopIndex, alight));
-                for (PatternStop next : nearbyPatternStops(grid, transferStop, 260)) {
+                for (PatternStop next : nearbyPatternStops(grid, transferStop, 320)) {
                     if (next.patternIndex == state.patternIndex) continue;
                     RoutePattern nextPattern = patterns.get(next.patternIndex);
-                    if (distanceMeters(nextPattern.stops.get(next.stopIndex), transferStop) > 260) continue;
+                    if (distanceMeters(nextPattern.stops.get(next.stopIndex), transferStop) > 320) continue;
                     if (next.stopIndex >= nextPattern.stops.size() - 1) continue;
                     queue.add(new PathState(next.patternIndex, next.stopIndex, state.transfers + 1, state.stops + rideStops, ridden));
                 }
             }
         }
+        if (progress != null) progress.onProgress(100, "No route found");
         return new ArrayList<>();
     }
 
-    private List<RoutePattern> loadRoutePatterns() throws Exception {
+    private void seedPathQueue(PriorityQueue<PathState> queue, List<RoutePattern> patterns, Map<String, List<PatternStop>> grid, Stop start, double radiusMeters) {
+        for (PatternStop candidate : nearbyPatternStops(grid, start, radiusMeters)) {
+            RoutePattern pattern = patterns.get(candidate.patternIndex);
+            if (distanceMeters(pattern.stops.get(candidate.stopIndex), start) > radiusMeters) continue;
+            if (candidate.stopIndex < pattern.stops.size() - 1) {
+                queue.add(new PathState(candidate.patternIndex, candidate.stopIndex, 0, 0, new ArrayList<>()));
+            }
+        }
+    }
+
+    private List<RoutePattern> loadRoutePatterns(RouteSearchProgressHandler progress) throws Exception {
         List<RoutePattern> patterns = new ArrayList<>();
-        for (Route route : routes) {
-            if ("MTR".equals(route.operator)) continue;
-            addRoutePattern(patterns, route, "outbound");
-            addRoutePattern(patterns, route, "inbound");
+        List<Route> snapshot = new ArrayList<>(routes);
+        ExecutorService pool = Executors.newFixedThreadPool(8);
+        ExecutorCompletionService<RoutePattern> completion = new ExecutorCompletionService<>(pool);
+        int tasks = 0;
+        for (Route route : snapshot) {
+            for (String dir : new String[]{"outbound", "inbound"}) {
+                tasks++;
+                completion.submit(() -> {
+                    try {
+                        List<Stop> stops = cachedRouteStops(route, dir);
+                        if (stops.size() > 1) return new RoutePattern(route, dir, stops);
+                    } catch (Exception ignored) {}
+                    return null;
+                });
+            }
+        }
+        try {
+            for (int done = 0; done < tasks; done++) {
+                RoutePattern pattern = completion.take().get();
+                if (pattern != null) patterns.add(pattern);
+                if (progress != null) {
+                    int percent = 2 + Math.round((done + 1) * 58f / Math.max(1, tasks));
+                    progress.onProgress(percent, "Loading route graph");
+                }
+            }
+        } finally {
+            pool.shutdownNow();
         }
         return patterns;
     }
@@ -690,8 +754,10 @@ private int tab = 0;
         showOptionSheet(customRoute.name, new String[]{"Rename", "Delete"}, (index, choice) -> {
             if ("Rename".equals(choice)) showRenameCustomRouteSheet(customRoute);
             else if ("Delete".equals(choice)) {
-                deleteCustomRoute(customRoute);
-                showRoutes();
+                showDeleteConfirmationSheet("Delete Route", "Delete " + customRoute.name + "?", () -> {
+                    deleteCustomRoute(customRoute);
+                    showRoutes();
+                });
             }
         });
     }
@@ -804,10 +870,16 @@ private int tab = 0;
         Button inbound = materialButton("Save Route in Opposite Direction");
         inbound.setTextSize(13);
         inbound.setOnClickListener(v -> saveBookmark(new Bookmark(r.operator, r.route, "inbound", r.serviceType, r.dest, r.orig, "Ungrouped")));
+        Button both = materialButton("Save Both Directions");
+        both.setTextSize(13);
+        both.setOnClickListener(v -> saveBothDirections(r));
         actions.addView(outbound, new LinearLayout.LayoutParams(-1, dp(52)));
         LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(-1, dp(52));
         ip.setMargins(0, dp(8), 0, 0);
         actions.addView(inbound, ip);
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(52));
+        bp.setMargins(0, dp(8), 0, 0);
+        actions.addView(both, bp);
         box.addView(actions);
         return box;
     }
@@ -893,18 +965,21 @@ private int tab = 0;
         content.removeAllViews();
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        Button back = pill("Back");
+        ImageButton back = themedImageButton(R.drawable.ic_arrow_back, elevatedSurface(), TEXT, BLUE, dp(22));
         back.setOnClickListener(v -> {
             navIsland.setVisibility(View.VISIBLE);
             if (topMenu != null) topMenu.setVisibility(View.VISIBLE);
             showBookmarks();
         });
-        header.addView(back, new LinearLayout.LayoutParams(dp(86), dp(44)));
-        TextView title = text("  " + b.route + " to " + b.to, 24, TEXT, true);
-        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        LinearLayout.LayoutParams backLp = new LinearLayout.LayoutParams(dp(44), dp(44));
+        backLp.setMargins(0, 0, dp(10), 0);
+        header.addView(back, backLp);
+        TextView title = routeTitlePill(b.route + " to " + b.to);
+        header.addView(title, new LinearLayout.LayoutParams(0, dp(44), 1));
         content.addView(header);
 
         ScrollView scroll = new ScrollView(this);
+        applyCardScrollFade(scroll);
         LinearLayout stops = new LinearLayout(this);
         stops.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(stops);
@@ -1363,8 +1438,10 @@ private int tab = 0;
             else if ("Rename Group".equals(choice)) showRenameGroupDialog(b.group);
             else if ("Group Color".equals(choice)) showGroupColorDialog(b.group);
             else if ("Delete".equals(choice)) {
-                removeBookmark(b);
-                showBookmarks();
+                showDeleteConfirmationSheet("Delete Bookmark", "Delete " + b.route + " from bookmarks?", () -> {
+                    removeBookmark(b);
+                    showBookmarks();
+                });
             }
         });
     }
@@ -1380,7 +1457,9 @@ private int tab = 0;
                 showBookmarks();
             } else if ("Rename".equals(choice)) showRenameGroupDialog(group);
             else if ("Group Color".equals(choice)) showGroupColorDialog(group);
-            else if ("Delete".equals(choice)) deleteGroup(group);
+            else if ("Delete".equals(choice)) {
+                showDeleteConfirmationSheet("Delete Group", "Delete " + group + " and move its routes to Ungrouped?", () -> deleteGroup(group));
+            }
         });
     }
     private void showRenameGroupDialog(String oldGroup) {
@@ -1434,6 +1513,7 @@ private int tab = 0;
     }
 
     interface OptionHandler { void onSelect(int index, String label); }
+    interface RouteSearchProgressHandler { void onProgress(int percent, String message); }
     interface RouteOptionHandler { void onSelect(Route route); }
     interface StopSelectHandler { void onSelect(Stop stop); }
     interface TextHandler { void onText(String value); }
@@ -1586,7 +1666,7 @@ private int tab = 0;
         open.setOnClickListener(v -> {
             dismissSheet();
             try {
-                Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS)
+                Intent intent = new Intent("android.settings.MANAGE_APP_PROMOTED_NOTIFICATIONS")
                         .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
                 startActivity(intent);
             } catch (Exception e) {
@@ -1911,7 +1991,7 @@ private int tab = 0;
         if (options.length > 7) {
             ScrollView scroll = new ScrollView(this);
             scroll.setFillViewport(false);
-            scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+            applyCardScrollFade(scroll);
             scroll.addView(body);
             showBottomSheet(title, scroll);
         } else {
@@ -1946,7 +2026,7 @@ private int tab = 0;
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
-        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        applyCardScrollFade(scroll);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list);
@@ -2031,7 +2111,7 @@ private int tab = 0;
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
-        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        applyCardScrollFade(scroll);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list);
@@ -2097,7 +2177,7 @@ private int tab = 0;
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
-        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        applyCardScrollFade(scroll);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list);
@@ -2203,7 +2283,7 @@ private int tab = 0;
         root.addView(sheetOverlay, new FrameLayout.LayoutParams(-1, -1));
         if (Build.VERSION.SDK_INT >= 30) sheetOverlay.requestApplyInsets();
         sheet.setTranslationY(dp(320));
-        sheet.animate().translationY(0).setDuration(220).start();
+        sheet.animate().translationY(0).setDuration(240).setInterpolator(new DecelerateInterpolator()).start();
     }
 
 
@@ -2221,6 +2301,42 @@ private int tab = 0;
             root.removeView(sheetOverlay);
             sheetOverlay = null;
         }
+    }
+
+    private TextView routeTitlePill(String label) {
+        TextView title = text(label, 18, TEXT, true);
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        title.setSingleLine(true);
+        title.setEllipsize(TextUtils.TruncateAt.END);
+        title.setPadding(dp(18), 0, dp(18), 0);
+        title.setBackground(round(elevatedSurface(), dp(22), BLUE));
+        final boolean[] expanded = {false};
+        title.setOnClickListener(v -> {
+            expanded[0] = !expanded[0];
+            title.setSingleLine(!expanded[0]);
+            title.setMaxLines(expanded[0] ? 4 : 1);
+        });
+        return title;
+    }
+
+    private void showDeleteConfirmationSheet(String title, String message, Runnable onDelete) {
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.addView(text(message, 16, MUTED, false));
+        Button cancel = sheetButton("Cancel");
+        cancel.setOnClickListener(v -> dismissSheet());
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, dp(56));
+        cp.setMargins(0, dp(16), 0, dp(8));
+        body.addView(cancel, cp);
+        Button delete = sheetButton("Delete");
+        delete.setTextColor(Color.WHITE);
+        delete.setBackground(round(Color.rgb(196, 58, 58), dp(28), Color.TRANSPARENT));
+        delete.setOnClickListener(v -> {
+            dismissSheet();
+            onDelete.run();
+        });
+        body.addView(delete, new LinearLayout.LayoutParams(-1, dp(56)));
+        showBottomSheet(title, body);
     }
 
     private Button materialButton(String label) {
@@ -2255,6 +2371,16 @@ private int tab = 0;
     private void saveBookmark(Bookmark b) {
         Set<String> set = new HashSet<>(prefs.getStringSet("bookmarks", new HashSet<>()));
         set.add(b.serialize());
+        prefs.edit().putStringSet("bookmarks", set).apply();
+        tab = 0;
+        renderNav();
+        showBookmarks();
+    }
+
+    private void saveBothDirections(Route r) {
+        Set<String> set = new HashSet<>(prefs.getStringSet("bookmarks", new HashSet<>()));
+        set.add(new Bookmark(r.operator, r.route, "outbound", r.serviceType, r.orig, r.dest, "Ungrouped").serialize());
+        set.add(new Bookmark(r.operator, r.route, "inbound", r.serviceType, r.dest, r.orig, "Ungrouped").serialize());
         prefs.edit().putStringSet("bookmarks", set).apply();
         tab = 0;
         renderNav();
@@ -2377,6 +2503,17 @@ private int tab = 0;
         }
     }
 
+    static class RouteSearchProgress {
+        final TextView status;
+        final ProgressBar bar;
+        RouteSearchProgress(TextView status, ProgressBar bar) { this.status = status; this.bar = bar; }
+        void update(int percent, String message) {
+            int p = Math.max(0, Math.min(100, percent));
+            status.setText(message + " (" + p + "%)");
+            bar.setProgress(p);
+        }
+    }
+
     private static class HttpStatusException extends Exception {
         final int code;
         final String body;
@@ -2494,7 +2631,7 @@ private int tab = 0;
     }
 
     static class Api {
-        private final Map<String, Stop> stopCache = new HashMap<>();
+        private final Map<String, Stop> stopCache = Collections.synchronizedMap(new HashMap<>());
 
         List<Stop> allStops() throws Exception {
             List<Stop> out = new ArrayList<>();

@@ -45,6 +45,7 @@ public class BusTrackingService extends Service {
     private MainActivity.Stop trackedStop;
     private long etaWindowStartMs;
     private long etaWindowDurationMs;
+    private long etaTargetMs;
     private boolean etaWindowComplete;
     private Runnable pollRunnable;
 
@@ -70,6 +71,7 @@ public class BusTrackingService extends Service {
         trackedStop = null;
         etaWindowStartMs = 0;
         etaWindowDurationMs = 0;
+        etaTargetMs = 0;
         etaWindowComplete = false;
         getSharedPreferences("hkbus", MODE_PRIVATE).edit().putString(PREF_TRACKING_KEY, bookmark.storageKey()).apply();
         startForeground(NOTIFICATION_ID, buildNotification("Finding nearest stop", "Live bus tracking", 0));
@@ -147,19 +149,25 @@ public class BusTrackingService extends Service {
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setShowWhen(true)
-                .setWhen(System.currentTimeMillis())
+                .setWhen(etaTargetMs > 0 ? etaTargetMs : System.currentTimeMillis())
+                .setDeleteIntent(cancelPending)
                 .setProgress(100, progress, false)
                 .addAction(new Notification.Action.Builder(
                         Icon.createWithResource(this, R.drawable.ic_track_cancel),
                         "Cancel",
                         cancelPending).build());
+        if (etaTargetMs > System.currentTimeMillis()) {
+            builder.setUsesChronometer(true).setChronometerCountDown(true);
+        }
         requestPromotedLiveUpdate(builder);
         applyProgressStyle(builder, progress);
-        if (Build.VERSION.SDK_INT >= 36) builder.setShortCriticalText(next);
+        if (Build.VERSION.SDK_INT >= 36) builder.setShortCriticalText(shortCriticalText(next));
         Notification notification = builder.build();
         if (Build.VERSION.SDK_INT >= 36) {
+            NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            boolean allowed = manager != null && manager.canPostPromotedNotifications();
             boolean requested = notification.extras != null && notification.extras.getBoolean("android.requestPromotedOngoing", false);
-            Log.d(TAG, "Live update requested=" + requested + " promotable=" + notification.hasPromotableCharacteristics());
+            Log.d(TAG, "Live update requested=" + requested + " allowed=" + allowed + " promotable=" + notification.hasPromotableCharacteristics());
         }
         return notification;
     }
@@ -175,8 +183,7 @@ public class BusTrackingService extends Service {
         if (Build.VERSION.SDK_INT < 36) return;
         int clamped = Math.max(0, Math.min(100, progress));
         Notification.ProgressStyle style = new Notification.ProgressStyle()
-                .setProgress(clamped)
-                .setStyledByProgress(true);
+                .setProgress(clamped);
         builder.setStyle(style);
     }
 
@@ -222,9 +229,11 @@ public class BusTrackingService extends Service {
                 if (etaWindowDurationMs == 0 || etaWindowComplete) {
                     etaWindowStartMs = now;
                     etaWindowDurationMs = etaMs;
+                    etaTargetMs = now + etaMs;
                     etaWindowComplete = false;
                     return 0;
                 }
+                etaTargetMs = etaWindowStartMs + etaWindowDurationMs;
                 long elapsed = Math.max(0, now - etaWindowStartMs);
                 return Math.max(0, Math.min(100, Math.round(elapsed * 100f / etaWindowDurationMs)));
             } catch (Exception ignored) {}
@@ -232,9 +241,16 @@ public class BusTrackingService extends Service {
         return 0;
     }
 
+    private String shortCriticalText(String next) {
+        if (next == null || next.length() == 0) return "Tracking";
+        if (next.length() <= 7) return next;
+        return next.replace(" min", "m");
+    }
+
     private void stopTracking() {
         bookmark = null;
         trackedStop = null;
+        etaTargetMs = 0;
         handler.removeCallbacksAndMessages(null);
         getSharedPreferences("hkbus", MODE_PRIVATE).edit().remove(PREF_TRACKING_KEY).apply();
         ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).cancel(NOTIFICATION_ID);
