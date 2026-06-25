@@ -105,6 +105,8 @@ private int tab = 0;
     private final Set<String> expandedCustomRoutes = new HashSet<>();
     private final Map<String, List<Stop>> routeStopCache = new HashMap<>();
     private final List<Stop> allStops = new ArrayList<>();
+    private volatile List<RoutePattern> precomputedRoutePatterns;
+    private volatile List<Stop> precomputedPhysicalStops;
     private boolean allStopsLoading = false;
     private boolean trackingReceiverRegistered = false;
     private final BroadcastReceiver trackingStoppedReceiver = new BroadcastReceiver() {
@@ -122,6 +124,7 @@ private int tab = 0;
         loadThemeColor();
         maybeAskLocation();
         buildShell();
+        preloadRouteGraph();
         loadRoutes();
     }
 
@@ -561,68 +564,131 @@ private int tab = 0;
     }
 
     private List<CustomRouteLeg> findShortestBusPath(Stop start, Stop end, RouteSearchProgressHandler progress) throws Exception {
-        if (progress != null) progress.onProgress(1, "Loading route graph");
-        List<RoutePattern> patterns = loadRoutePatterns(progress);
-        if (progress != null) progress.onProgress(62, "Indexing nearby stops");
+        if (progress != null) progress.onProgress(1, "Opening route graph");
+        List<RoutePattern> patterns = loadSearchPatterns(progress);
+        if (progress != null) progress.onProgress(62, "Indexing overlapping stops");
+        Map<String, List<PatternStop>> transferMap = buildTransferMap(patterns);
         Map<String, List<PatternStop>> grid = buildPatternGrid(patterns);
         PriorityQueue<PathState> queue = new PriorityQueue<>((a, b) -> {
-            if (a.transfers != b.transfers) return a.transfers - b.transfers;
             if (a.stops != b.stops) return a.stops - b.stops;
+            if (a.transfers != b.transfers) return a.transfers - b.transfers;
             return a.legs.size() - b.legs.size();
         });
-        seedPathQueue(queue, patterns, grid, start, 650);
-        if (queue.isEmpty()) seedPathQueue(queue, patterns, grid, start, 1000);
-        if (progress != null) progress.onProgress(70, "Checking direct routes");
+        seedPathQueue(queue, patterns, transferMap, grid, start, 180);
+        if (queue.isEmpty()) seedPathQueue(queue, patterns, transferMap, grid, start, 650);
+        if (queue.isEmpty()) seedPathQueue(queue, patterns, transferMap, grid, start, 1000);
+        if (progress != null) progress.onProgress(70, "Checking route chains");
         Map<String, Integer> best = new HashMap<>();
+        List<CustomRouteLeg> bestLegs = new ArrayList<>();
+        int bestTotalStops = Integer.MAX_VALUE;
+        int bestTransfers = Integer.MAX_VALUE;
         int explored = 0;
-        int maxExplored = 24000;
+        int maxExplored = 36000;
         while (!queue.isEmpty() && explored < maxExplored) {
-            explored++;
-            if (progress != null && explored % 250 == 0) {
-                int percent = Math.min(98, 70 + Math.round(explored * 28f / maxExplored));
-                progress.onProgress(percent, "Checking transfer options");
-            }
             PathState state = queue.poll();
+            if (state.stops > bestTotalStops) break;
+            explored++;
+            if (progress != null && explored % 300 == 0) {
+                int percent = Math.min(98, 70 + Math.round(explored * 28f / maxExplored));
+                progress.onProgress(percent, "Checking route chains");
+            }
             String key = state.patternIndex + ":" + state.stopIndex + ":" + state.transfers;
             Integer prev = best.get(key);
             if (prev != null && prev <= state.stops) continue;
             best.put(key, state.stops);
             RoutePattern pattern = patterns.get(state.patternIndex);
-            int endIndex = firstReachableIndex(pattern, end, state.stopIndex + 1, 650);
+            int endIndex = firstReachableIndex(pattern, end, state.stopIndex + 1, 180);
+            if (endIndex < 0) endIndex = firstReachableIndex(pattern, end, state.stopIndex + 1, 650);
             if (endIndex >= 0) {
-                List<CustomRouteLeg> legs = new ArrayList<>(state.legs);
-                legs.add(legFrom(pattern, state.stopIndex, endIndex));
-                if (progress != null) progress.onProgress(100, "Route found");
-                return legs;
+                int totalStops = state.stops + Math.max(0, endIndex - state.stopIndex);
+                if (totalStops < bestTotalStops || (totalStops == bestTotalStops && state.transfers < bestTransfers)) {
+                    bestTotalStops = totalStops;
+                    bestTransfers = state.transfers;
+                    bestLegs = new ArrayList<>(state.legs);
+                    bestLegs.add(legFrom(pattern, state.stopIndex, endIndex));
+                }
+                continue;
             }
-            if (state.transfers >= 3) continue;
+            if (state.transfers >= 4) continue;
             for (int alight = state.stopIndex + 1; alight < pattern.stops.size(); alight++) {
                 Stop transferStop = pattern.stops.get(alight);
                 if (transferStop.lat == 0 && transferStop.lon == 0) continue;
                 int rideStops = alight - state.stopIndex;
+                int nextCost = state.stops + rideStops;
+                if (nextCost >= bestTotalStops) continue;
                 List<CustomRouteLeg> ridden = new ArrayList<>(state.legs);
                 ridden.add(legFrom(pattern, state.stopIndex, alight));
-                for (PatternStop next : nearbyPatternStops(grid, transferStop, 320)) {
+                for (PatternStop next : nearbyPatternStops(transferMap, grid, transferStop, 180)) {
                     if (next.patternIndex == state.patternIndex) continue;
                     RoutePattern nextPattern = patterns.get(next.patternIndex);
-                    if (distanceMeters(nextPattern.stops.get(next.stopIndex), transferStop) > 320) continue;
+                    if (!sameTransferStop(nextPattern.stops.get(next.stopIndex), transferStop) && distanceMeters(nextPattern.stops.get(next.stopIndex), transferStop) > 180) continue;
                     if (next.stopIndex >= nextPattern.stops.size() - 1) continue;
-                    queue.add(new PathState(next.patternIndex, next.stopIndex, state.transfers + 1, state.stops + rideStops, ridden));
+                    queue.add(new PathState(next.patternIndex, next.stopIndex, state.transfers + 1, nextCost, ridden));
                 }
             }
         }
-        if (progress != null) progress.onProgress(100, "No route found");
-        return new ArrayList<>();
+        if (progress != null) progress.onProgress(100, bestLegs.isEmpty() ? "No route found" : "Route found");
+        return bestLegs;
     }
 
-    private void seedPathQueue(PriorityQueue<PathState> queue, List<RoutePattern> patterns, Map<String, List<PatternStop>> grid, Stop start, double radiusMeters) {
-        for (PatternStop candidate : nearbyPatternStops(grid, start, radiusMeters)) {
+    private void seedPathQueue(PriorityQueue<PathState> queue, List<RoutePattern> patterns, Map<String, List<PatternStop>> transferMap, Map<String, List<PatternStop>> grid, Stop start, double radiusMeters) {
+        for (PatternStop candidate : nearbyPatternStops(transferMap, grid, start, radiusMeters)) {
             RoutePattern pattern = patterns.get(candidate.patternIndex);
-            if (distanceMeters(pattern.stops.get(candidate.stopIndex), start) > radiusMeters) continue;
+            if (!sameTransferStop(pattern.stops.get(candidate.stopIndex), start) && distanceMeters(pattern.stops.get(candidate.stopIndex), start) > radiusMeters) continue;
             if (candidate.stopIndex < pattern.stops.size() - 1) {
                 queue.add(new PathState(candidate.patternIndex, candidate.stopIndex, 0, 0, new ArrayList<>()));
             }
         }
+    }
+
+    private void preloadRouteGraph() {
+        io.execute(() -> {
+            try {
+                RouteGraphStore store = new RouteGraphStore(this);
+                List<RoutePattern> patterns = store.loadPatterns();
+                List<Stop> stops = store.loadPhysicalStops();
+                if (!patterns.isEmpty()) precomputedRoutePatterns = patterns;
+                if (!stops.isEmpty()) {
+                    precomputedPhysicalStops = stops;
+                    runOnUiThread(() -> {
+                        if (allStops.isEmpty()) allStops.addAll(stops);
+                    });
+                }
+            } catch (Exception ignored) {}
+        });
+    }
+
+    private List<RoutePattern> loadSearchPatterns(RouteSearchProgressHandler progress) throws Exception {
+        List<RoutePattern> cached = precomputedRoutePatterns;
+        if (cached != null && !cached.isEmpty()) {
+            if (progress != null) progress.onProgress(8, "Using bundled route graph");
+            return cached;
+        }
+        try {
+            RouteGraphStore store = new RouteGraphStore(this);
+            List<RoutePattern> patterns = store.loadPatterns();
+            if (!patterns.isEmpty()) {
+                precomputedRoutePatterns = patterns;
+                if (progress != null) progress.onProgress(12, "Using bundled route graph");
+                return patterns;
+            }
+        } catch (Exception ignored) {}
+        if (progress != null) progress.onProgress(12, "Bundled graph unavailable; loading live routes");
+        return loadRoutePatterns(progress);
+    }
+
+    private List<Stop> loadStopPickerStops() throws Exception {
+        List<Stop> cached = precomputedPhysicalStops;
+        if (cached != null && !cached.isEmpty()) return cached;
+        try {
+            RouteGraphStore store = new RouteGraphStore(this);
+            List<Stop> stops = store.loadPhysicalStops();
+            if (!stops.isEmpty()) {
+                precomputedPhysicalStops = stops;
+                return stops;
+            }
+        } catch (Exception ignored) {}
+        return dedupeStops(api.allStops());
     }
 
     private List<RoutePattern> loadRoutePatterns(RouteSearchProgressHandler progress) throws Exception {
@@ -678,6 +744,20 @@ private int tab = 0;
         return stops;
     }
 
+    private Map<String, List<PatternStop>> buildTransferMap(List<RoutePattern> patterns) {
+        Map<String, List<PatternStop>> transfers = new HashMap<>();
+        for (int p = 0; p < patterns.size(); p++) {
+            List<Stop> stops = patterns.get(p).stops;
+            for (int i = 0; i < stops.size(); i++) {
+                Stop stop = stops.get(i);
+                if (stop.transferKey == null || stop.transferKey.length() == 0 || "0:0".equals(stop.transferKey)) continue;
+                if (!transfers.containsKey(stop.transferKey)) transfers.put(stop.transferKey, new ArrayList<>());
+                transfers.get(stop.transferKey).add(new PatternStop(p, i));
+            }
+        }
+        return transfers;
+    }
+
     private Map<String, List<PatternStop>> buildPatternGrid(List<RoutePattern> patterns) {
         Map<String, List<PatternStop>> grid = new HashMap<>();
         for (int p = 0; p < patterns.size(); p++) {
@@ -693,15 +773,29 @@ private int tab = 0;
         return grid;
     }
 
-    private List<PatternStop> nearbyPatternStops(Map<String, List<PatternStop>> grid, Stop stop, double meters) {
+    private List<PatternStop> nearbyPatternStops(Map<String, List<PatternStop>> transferMap, Map<String, List<PatternStop>> grid, Stop stop, double meters) {
         List<PatternStop> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        if (stop.transferKey != null && !"0:0".equals(stop.transferKey)) {
+            List<PatternStop> exact = transferMap.get(stop.transferKey);
+            if (exact != null) {
+                for (PatternStop item : exact) {
+                    String key = item.patternIndex + ":" + item.stopIndex;
+                    if (seen.add(key)) out.add(item);
+                }
+            }
+        }
         if (stop.lat == 0 && stop.lon == 0) return out;
         int lat = gridBucket(stop.lat);
         int lon = gridBucket(stop.lon);
         for (int dy = -1; dy <= 1; dy++) {
             for (int dx = -1; dx <= 1; dx++) {
                 List<PatternStop> cell = grid.get((lat + dy) + ":" + (lon + dx));
-                if (cell != null) out.addAll(cell);
+                if (cell == null) continue;
+                for (PatternStop item : cell) {
+                    String key = item.patternIndex + ":" + item.stopIndex;
+                    if (seen.add(key)) out.add(item);
+                }
             }
         }
         return out;
@@ -709,7 +803,8 @@ private int tab = 0;
 
     private int firstReachableIndex(RoutePattern pattern, Stop target, int startIndex, double meters) {
         for (int i = Math.max(0, startIndex); i < pattern.stops.size(); i++) {
-            if (distanceMeters(pattern.stops.get(i), target) <= meters) return i;
+            Stop candidate = pattern.stops.get(i);
+            if (sameTransferStop(candidate, target) || distanceMeters(candidate, target) <= meters) return i;
         }
         return -1;
     }
@@ -725,6 +820,8 @@ private int tab = 0;
 
     private static int gridBucket(double value) { return (int) Math.floor(value * 400); }
     private static String gridKey(double lat, double lon) { return gridBucket(lat) + ":" + gridBucket(lon); }
+    private static String physicalKey(double lat, double lon) { return (lat == 0 && lon == 0) ? "0:0" : Math.round(lat * 1000) + ":" + Math.round(lon * 1000); }
+    private static boolean sameTransferStop(Stop a, Stop b) { return a != null && b != null && a.transferKey != null && a.transferKey.length() > 0 && !"0:0".equals(a.transferKey) && a.transferKey.equals(b.transferKey); }
     private static double distanceMeters(Stop a, Stop b) {
         if (a.lat == 0 && a.lon == 0) return Double.MAX_VALUE;
         if (b.lat == 0 && b.lon == 0) return Double.MAX_VALUE;
@@ -2088,7 +2185,7 @@ private int tab = 0;
         showLoadingSheet("Loading Stops", "Loading bus stops...");
         io.execute(() -> {
             try {
-                List<Stop> loaded = dedupeStops(api.allStops());
+                List<Stop> loaded = loadStopPickerStops();
                 runOnUiThread(() -> {
                     allStopsLoading = false;
                     allStops.clear();
@@ -2630,11 +2727,14 @@ private int tab = 0;
     }
 
     static class Stop {
-        final String id, name;
+        final String id, name, transferKey;
         final int seq;
         final double lat, lon;
         Stop(String id, String name, int seq, double lat, double lon) {
-            this.id = id; this.name = name; this.seq = seq; this.lat = lat; this.lon = lon;
+            this(id, name, seq, lat, lon, physicalKey(lat, lon));
+        }
+        Stop(String id, String name, int seq, double lat, double lon, String transferKey) {
+            this.id = id; this.name = name; this.seq = seq; this.lat = lat; this.lon = lon; this.transferKey = transferKey == null ? physicalKey(lat, lon) : transferKey;
         }
     }
 
@@ -2749,6 +2849,8 @@ private int tab = 0;
         }
 
         private List<Stop> mtrRouteStops(Bookmark b) throws Exception {
+            List<Stop> dictionaryStops = mtrDictionaryRouteStops(b);
+            if (dictionaryStops.size() > 1) return dictionaryStops;
             JSONObject schedule = mtrSchedule(b.route);
             JSONArray arr = schedule.getJSONArray("busStop");
             List<Stop> out = new ArrayList<>();
@@ -2762,6 +2864,63 @@ private int tab = 0;
                 out.add(new Stop(id, name, i + 1, lat, lon));
             }
             return out;
+        }
+
+        private List<Stop> mtrDictionaryRouteStops(Bookmark b) {
+            List<MtrBusStops.Info> infos = mtrInfosForRoute(b.route, b.dir.startsWith("in") ? "D" : "U");
+            if (infos.isEmpty()) infos = mtrInfosForRoute(b.route, "");
+            List<Stop> out = new ArrayList<>();
+            for (int i = 0; i < infos.size(); i++) {
+                MtrBusStops.Info info = infos.get(i);
+                out.add(new Stop(info.id, info.name, i + 1, info.lat, info.lon));
+            }
+            return out;
+        }
+
+        private List<MtrBusStops.Info> mtrInfosForRoute(String route, String dirCode) {
+            List<MtrBusStops.Info> best = new ArrayList<>();
+            for (String candidate : mtrRouteCandidates(route)) {
+                List<MtrBusStops.Info> infos = new ArrayList<>();
+                for (MtrBusStops.Info info : MtrBusStops.all()) {
+                    if (!candidate.equals(mtrRouteFromStopId(info.id))) continue;
+                    if (dirCode.length() > 0 && !dirCode.equals(mtrDirectionFromStopId(info.id))) continue;
+                    infos.add(info);
+                }
+                Collections.sort(infos, Comparator.comparingInt(info -> mtrSeqFromStopId(info.id)));
+                if (!infos.isEmpty()) return infos;
+                if (best.isEmpty() && dirCode.length() == 0) best = infos;
+            }
+            return best;
+        }
+
+        private List<String> mtrRouteCandidates(String route) {
+            List<String> out = new ArrayList<>();
+            if (route == null || route.length() == 0) return out;
+            out.add(route);
+            String base = route;
+            while (base.length() > 1 && Character.isLetter(base.charAt(base.length() - 1))) {
+                base = base.substring(0, base.length() - 1);
+                if (!out.contains(base)) out.add(base);
+            }
+            return out;
+        }
+
+        private static String mtrRouteFromStopId(String id) {
+            int dash = id == null ? -1 : id.indexOf('-');
+            return dash <= 0 ? "" : id.substring(0, dash);
+        }
+
+        private static String mtrDirectionFromStopId(String id) {
+            if (id == null) return "";
+            java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("-(?:n)?([UD])\\d+$").matcher(id);
+            return matcher.find() ? matcher.group(1) : "";
+        }
+
+        private static int mtrSeqFromStopId(String id) {
+            if (id == null) return 0;
+            java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("-(?:n)?[UD](\\d+)$").matcher(id);
+            if (!matcher.find()) return 0;
+            try { return Integer.parseInt(matcher.group(1)); } catch (Exception e) { return 0; }
         }
 
         private List<String> mtrEtas(Bookmark b, Stop s) throws Exception {
