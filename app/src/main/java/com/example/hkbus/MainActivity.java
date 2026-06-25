@@ -10,12 +10,15 @@ import android.content.IntentFilter;
 import android.content.ClipData;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.RenderEffect;
 import android.graphics.Shader;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.location.Location;
 import android.location.LocationManager;
 import android.net.Uri;
@@ -29,6 +32,7 @@ import android.text.TextWatcher;
 import android.text.TextUtils;
 import android.view.DragEvent;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
@@ -45,6 +49,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -115,6 +120,8 @@ private int tab = 0;
     private Location lastLocation;
     private String selectedGroup = "All";
     private boolean groupOrderMode = false;
+    private float refreshDownY = -1f;
+    private boolean refreshTriggered = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -204,9 +211,9 @@ private int tab = 0;
     }
     private void renderNav() {
         nav.removeAllViews();
-        nav.addView(navButton("Bookmarks", 0, R.drawable.ic_nav_bookmark), new LinearLayout.LayoutParams(0, -1, 1));
-        nav.addView(navButton("Routes", 1, R.drawable.ic_nav_nodes), new LinearLayout.LayoutParams(0, -1, 1));
-        nav.addView(navButton("Search", 2, R.drawable.ic_nav_search), new LinearLayout.LayoutParams(0, -1, 1));
+        nav.addView(navButton(t("Bookmarks"), 0, R.drawable.ic_nav_bookmark), new LinearLayout.LayoutParams(0, -1, 1));
+        nav.addView(navButton(t("Routes"), 1, R.drawable.ic_nav_nodes), new LinearLayout.LayoutParams(0, -1, 1));
+        nav.addView(navButton(t("Search"), 2, R.drawable.ic_nav_search), new LinearLayout.LayoutParams(0, -1, 1));
     }
 
     private View navButton(String label, int index, int iconRes) {
@@ -234,6 +241,8 @@ private int tab = 0;
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(22));
         lp.setMargins(0, dp(3), 0, 0);
         item.addView(labelView, lp);
+        applyExpressivePress(item);
+
         item.setOnClickListener(x -> {
             tab = index;
             renderNav();
@@ -244,11 +253,12 @@ private int tab = 0;
     private void showRoutes() {
         updateGroupFab();
         content.removeAllViews();
-        content.addView(pageTitle("Routes"));
-        content.addView(text("Build named journeys from one stop to another.", 15, MUTED, false));
+        content.addView(pageTitle(t("Routes")));
+        content.addView(text(t("Build named journeys from chained bus route cards."), 15, MUTED, false));
 
         ScrollView scroll = new ScrollView(this);
         applyCardScrollFade(scroll);
+        attachPullToRefresh(scroll);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list);
@@ -258,7 +268,7 @@ private int tab = 0;
 
         List<CustomRoute> customRoutes = getCustomRoutes();
         if (customRoutes.isEmpty()) {
-            list.addView(centerStatus("Tap + to create a route."));
+            list.addView(centerStatus(t("Tap + to create a route.")));
             return;
         }
         for (CustomRoute route : customRoutes) list.addView(customRouteCard(route));
@@ -269,11 +279,11 @@ private int tab = 0;
     }
 
     private void showNewRouteNameSheet() {
-        showTextInputSheet("New Route", "", "Route name", value -> {
+        showTextInputSheet(t("New Route"), "", t("Route name"), value -> {
             String name = value == null ? "" : value.trim();
             if (name.length() == 0) return;
             CustomRoute customRoute = new CustomRoute(String.valueOf(System.currentTimeMillis()), name, new ArrayList<>());
-            chooseJourneyStartStop(customRoute);
+            showCustomRouteEditor(customRoute);
         });
     }
 
@@ -337,7 +347,7 @@ private int tab = 0;
         box.addView(title);
 
         if (customRoute.legs.isEmpty()) {
-            TextView empty = text("No bus routes added yet", 15, MUTED, false);
+            TextView empty = text(t("No bus routes added yet"), 15, MUTED, false);
             LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-1, -2);
             ep.setMargins(0, dp(10), 0, 0);
             box.addView(empty, ep);
@@ -362,13 +372,13 @@ private int tab = 0;
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.CENTER_VERTICAL);
         actions.setPadding(0, dp(12), 0, 0);
-        Button expand = materialButton(expandedCustomRoutes.contains(customRoute.id) ? "Collapse" : "Expand");
+        Button expand = materialButton(expandedCustomRoutes.contains(customRoute.id) ? t("Collapse") : t("Expand"));
         expand.setOnClickListener(v -> {
             if (expandedCustomRoutes.contains(customRoute.id)) expandedCustomRoutes.remove(customRoute.id);
             else expandedCustomRoutes.add(customRoute.id);
             showRoutes();
         });
-        Button edit = materialButton("Edit");
+        Button edit = materialButton(t("Edit"));
         edit.setOnClickListener(v -> showCustomRouteEditor(customRoute));
         actions.addView(expand, new LinearLayout.LayoutParams(0, dp(44), 1));
         TextView gap = new TextView(this);
@@ -391,18 +401,16 @@ private int tab = 0;
         row.setGravity(Gravity.CENTER_VERTICAL);
         TextView route = text(leg.route, 20, TEXT, true);
         row.addView(route, new LinearLayout.LayoutParams(0, -2, 1));
-        TextView eta = text("Loading", 15, GREEN, true);
+        TextView eta = text(t("Loading"), 15, GREEN, true);
         eta.setGravity(Gravity.CENTER);
         eta.setSingleLine(true);
         eta.setPadding(dp(14), dp(8), dp(14), dp(8));
         eta.setBackground(round(surface(), dp(15), outline()));
         row.addView(eta, new LinearLayout.LayoutParams(-2, dp(38)));
         wrap.addView(row);
-
-        TextView stop = text(leg.startName, 14, MUTED, false);
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
-        sp.setMargins(0, dp(6), 0, 0);
-        wrap.addView(stop, sp);
+        sp.setMargins(0, dp(10), 0, 0);
+        wrap.addView(routeEndsView(leg.startName, leg.endName), sp);
         loadFirstEtaInto(leg, eta);
         return wrap;
     }
@@ -415,27 +423,13 @@ private int tab = 0;
         header.addView(text(title, 22, TEXT, true), new LinearLayout.LayoutParams(0, -2, 1));
         if (!editPage) header.addView(groupPill(opName(leg.operator)));
         box.addView(header);
-
-        TextView start = text(leg.startName, 15, TEXT, true);
-        start.setPadding(dp(14), dp(10), dp(14), dp(10));
-        start.setBackground(round(fieldSurface(), dp(14), outline()));
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
         sp.setMargins(0, dp(12), 0, dp(10));
-        box.addView(start, sp);
+        box.addView(routeEndsView(leg.startName, leg.endName), sp);
 
         LinearLayout etaRow = etaBoxRow(null);
         box.addView(etaRow);
         loadEtaRowInto(leg.bookmark(), leg.startStop(), etaRow);
-
-        TextView connector = text("|", 20, MUTED, false);
-        connector.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2);
-        cp.setMargins(0, dp(6), 0, dp(2));
-        box.addView(connector, cp);
-
-        TextView end = text(leg.endName, 14, MUTED, false);
-        end.setGravity(Gravity.CENTER);
-        box.addView(end);
         return box;
     }
 
@@ -449,7 +443,7 @@ private int tab = 0;
         header.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = text(customRoute.name, 24, TEXT, true);
         header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        Button done = materialButton("Done");
+        Button done = materialButton(t("Done"));
         done.setOnClickListener(v -> {
             saveCustomRoute(customRoute);
             if (navIsland != null) navIsland.setVisibility(View.VISIBLE);
@@ -470,7 +464,7 @@ private int tab = 0;
         content.addView(scroll, lp);
 
         if (customRoute.legs.isEmpty()) {
-            list.addView(centerStatus("No bus routes in this path."));
+            list.addView(centerStatus(t("No bus routes added yet")));
         } else {
             for (int i = 0; i < customRoute.legs.size(); i++) {
                 final int index = i;
@@ -482,18 +476,23 @@ private int tab = 0;
                 list.addView(card);
             }
         }
+        Button add = materialButton(t("Add Bus Route"));
+        add.setOnClickListener(v -> beginAddRouteLegAt(customRoute, customRoute.legs.size()));
+        LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, dp(54));
+        ap.setMargins(0, dp(14), 0, dp(10));
+        list.addView(add, ap);
     }
 
     private void showCustomRouteLegMenu(CustomRoute customRoute, int index) {
-        showOptionSheet("Bus Route", new String[]{"Remove Bus Route", "Add Bus Route Above", "Add Bus Route Below"}, (choiceIndex, choice) -> {
-            if ("Remove Bus Route".equals(choice)) {
-                showDeleteConfirmationSheet("Remove Bus Route", "Remove this bus route from the journey?", () -> {
+        showOptionSheet(t("Bus Route"), new String[]{t("Remove Bus Route"), t("Add Bus Route Above"), t("Add Bus Route Below")}, (choiceIndex, choice) -> {
+            if (choiceIndex == 0) {
+                showDeleteConfirmationSheet(t("Remove Bus Route"), "Remove this bus route from the journey?", () -> {
                     if (index >= 0 && index < customRoute.legs.size()) customRoute.legs.remove(index);
                     showCustomRouteEditor(customRoute);
                 });
-            } else if ("Add Bus Route Above".equals(choice)) {
+            } else if (choiceIndex == 1) {
                 beginAddRouteLegAt(customRoute, Math.max(0, index));
-            } else if ("Add Bus Route Below".equals(choice)) {
+            } else if (choiceIndex == 2) {
                 beginAddRouteLegAt(customRoute, Math.min(customRoute.legs.size(), index + 1));
             }
         });
@@ -505,38 +504,74 @@ private int tab = 0;
     }
 
     private void beginAddRouteLegAt(CustomRoute customRoute, int insertIndex) {
-        if (routes.isEmpty()) { showInfoSheet("Routes", "Routes are still loading."); return; }
+        if (routes.isEmpty()) { showInfoSheet(t("Routes"), "Routes are still loading."); return; }
+        int safeIndex = Math.max(0, Math.min(insertIndex, customRoute.legs.size()));
+        Stop fixedStart = safeIndex > 0 ? customRoute.legs.get(safeIndex - 1).endStop() : null;
+        Stop fixedEnd = safeIndex < customRoute.legs.size() ? customRoute.legs.get(safeIndex).startStop() : null;
         List<Route> choices = new ArrayList<>(routes);
         Collections.sort(choices, Comparator.comparing((Route r) -> r.route.length()).thenComparing(r -> r.route));
-        showRoutePickerSheet("Select Bus Route", choices, route -> chooseRouteStops(route, customRoute, insertIndex));
+        showRoutePickerSheet(t("Select Bus Route"), choices, route -> chooseRouteStops(route, customRoute, safeIndex, fixedStart, fixedEnd));
     }
 
-    private void chooseRouteStops(Route route, CustomRoute customRoute, int insertIndex) {
-        showLoadingSheet("Loading Bus Route", "Loading bus route stops...");
-        Bookmark b = new Bookmark(route.operator, route.route, "outbound", route.serviceType, route.orig, route.dest, "Ungrouped");
+    private void chooseRouteStops(Route route, CustomRoute customRoute, int insertIndex, Stop fixedStart, Stop fixedEnd) {
+        showLoadingSheet(t("Loading Bus Route"), t("Loading bus route stops..."));
         io.execute(() -> {
             try {
                 List<Stop> stops = cachedRouteStops(route, "outbound");
-                runOnUiThread(() -> chooseStartStop(route, stops, customRoute, insertIndex));
+                runOnUiThread(() -> chooseStartStop(route, stops, customRoute, insertIndex, fixedStart, fixedEnd));
             } catch (Exception e) {
-                runOnUiThread(() -> showInfoSheet("Route", "Could not load stops: " + e.getMessage()));
+                runOnUiThread(() -> showInfoSheet(t("Routes"), "Could not load stops: " + e.getMessage()));
             }
         });
     }
 
-    private void chooseStartStop(Route route, List<Stop> stops, CustomRoute customRoute, int insertIndex) {
-        showStopPickerSheet("Starting Stop", stops, (startIndex, label) -> chooseEndStop(route, stops, startIndex, customRoute, insertIndex));
+    private void chooseStartStop(Route route, List<Stop> stops, CustomRoute customRoute, int insertIndex, Stop fixedStart, Stop fixedEnd) {
+        if (fixedStart != null) {
+            int startIndex = matchingStopIndex(stops, fixedStart, 0);
+            if (startIndex < 0) {
+                showInfoSheet(t("Routes"), "Selected bus route does not stop at the previous terminal stop.");
+                return;
+            }
+            chooseEndStop(route, stops, startIndex, customRoute, insertIndex, fixedEnd);
+        } else {
+            showStopPickerSheet(t("Starting Stop"), stops, (startIndex, label) -> chooseEndStop(route, stops, startIndex, customRoute, insertIndex, fixedEnd));
+        }
     }
 
-    private void chooseEndStop(Route route, List<Stop> stops, int startIndex, CustomRoute customRoute, int insertIndex) {
-        showStopPickerSheet("Ending Stop", stops, (endIndex, label) -> {
-            Stop start = stops.get(startIndex);
-            Stop end = stops.get(endIndex);
-            CustomRouteLeg leg = new CustomRouteLeg(route.operator, route.route, "outbound", route.serviceType, route.orig, route.dest, start.id, start.name, start.seq, start.lat, start.lon, end.id, end.name, end.seq, end.lat, end.lon);
-            int safeIndex = Math.max(0, Math.min(insertIndex, customRoute.legs.size()));
-            customRoute.legs.add(safeIndex, leg);
-            showCustomRouteEditor(customRoute);
-        });
+    private void chooseEndStop(Route route, List<Stop> stops, int startIndex, CustomRoute customRoute, int insertIndex, Stop fixedEnd) {
+        if (fixedEnd != null) {
+            int endIndex = matchingStopIndex(stops, fixedEnd, startIndex + 1);
+            if (endIndex < 0) {
+                showInfoSheet(t("Routes"), "Selected bus route cannot connect to the next starting stop.");
+                return;
+            }
+            addCustomRouteLeg(route, stops, startIndex, endIndex, customRoute, insertIndex);
+        } else {
+            showStopPickerSheet(t("Ending Stop"), stops, (endIndex, label) -> {
+                if (endIndex <= startIndex) {
+                    showInfoSheet(t("Routes"), "Terminal stop must come after the starting stop.");
+                    return;
+                }
+                addCustomRouteLeg(route, stops, startIndex, endIndex, customRoute, insertIndex);
+            });
+        }
+    }
+
+    private void addCustomRouteLeg(Route route, List<Stop> stops, int startIndex, int endIndex, CustomRoute customRoute, int insertIndex) {
+        Stop start = stops.get(startIndex);
+        Stop end = stops.get(endIndex);
+        CustomRouteLeg leg = new CustomRouteLeg(route.operator, route.route, "outbound", route.serviceType, route.orig, route.dest, start.id, start.name, start.seq, start.lat, start.lon, end.id, end.name, end.seq, end.lat, end.lon);
+        int safeIndex = Math.max(0, Math.min(insertIndex, customRoute.legs.size()));
+        customRoute.legs.add(safeIndex, leg);
+        showCustomRouteEditor(customRoute);
+    }
+
+    private int matchingStopIndex(List<Stop> stops, Stop target, int fromIndex) {
+        for (int i = Math.max(0, fromIndex); i < stops.size(); i++) {
+            Stop candidate = stops.get(i);
+            if (sameTransferStop(candidate, target) || distanceMeters(candidate, target) <= 180 || candidate.name.equalsIgnoreCase(target.name)) return i;
+        }
+        return -1;
     }
 
     private String[] stopOptionLabels(List<Stop> stops) {
@@ -905,11 +940,11 @@ private int tab = 0;
     private void showSearch() {
         updateGroupFab();
         content.removeAllViews();
-        content.addView(pageTitle("Search"));
-        content.addView(text("Find KMB, Citybus, and MTR Bus routes, then save either direction.", 15, MUTED, false));
+        content.addView(pageTitle(t("Search")));
+        content.addView(text(t("Find KMB, Citybus, and MTR Bus routes, then save either direction."), 15, MUTED, false));
         EditText search = new EditText(this);
         search.setSingleLine(true);
-        search.setHint("Route number or destination");
+        search.setHint(t("Route number or destination"));
         search.setHintTextColor(MUTED);
         search.setTextColor(TEXT);
         search.setTextSize(18);
@@ -922,6 +957,7 @@ private int tab = 0;
 
         ScrollView scroll = new ScrollView(this);
         applyCardScrollFade(scroll);
+        attachPullToRefresh(scroll);
         LinearLayout results = new LinearLayout(this);
         results.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(results);
@@ -940,7 +976,7 @@ private int tab = 0;
         results.removeAllViews();
         String q = query.trim().toLowerCase(Locale.US);
         if (routes.isEmpty()) {
-            results.addView(centerStatus("Loading routes..."));
+            results.addView(centerStatus(t("Loading routes...")));
             return;
         }
         int count = 0;
@@ -950,25 +986,27 @@ private int tab = 0;
             results.addView(routeCard(r));
             if (++count >= 80) break;
         }
-        if (count == 0) results.addView(centerStatus("No matching routes"));
+        if (count == 0) results.addView(centerStatus(t("No matching routes")));
     }
 
     private View routeCard(Route r) {
         LinearLayout box = card();
         TextView title = text(r.route + "  " + opName(r.operator), 24, TEXT, true);
         box.addView(title);
-        box.addView(text(r.orig + "  ->  " + r.dest, 15, MUTED, false));
+        LinearLayout.LayoutParams endsLp = new LinearLayout.LayoutParams(-1, -2);
+        endsLp.setMargins(0, dp(12), 0, dp(2));
+        box.addView(routeEndsView(r.orig, r.dest), endsLp);
 
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.VERTICAL);
         actions.setPadding(0, dp(12), 0, 0);
-        Button outbound = materialButton("Save Route in This Direction");
+        Button outbound = materialButton(t("Save Route in This Direction"));
         outbound.setTextSize(13);
         outbound.setOnClickListener(v -> saveBookmark(new Bookmark(r.operator, r.route, "outbound", r.serviceType, r.orig, r.dest, "Ungrouped")));
-        Button inbound = materialButton("Save Route in Opposite Direction");
+        Button inbound = materialButton(t("Save Route in Opposite Direction"));
         inbound.setTextSize(13);
         inbound.setOnClickListener(v -> saveBookmark(new Bookmark(r.operator, r.route, "inbound", r.serviceType, r.dest, r.orig, "Ungrouped")));
-        Button both = materialButton("Save Both Directions");
+        Button both = materialButton(t("Save Both Directions"));
         both.setTextSize(13);
         both.setOnClickListener(v -> saveBothDirections(r));
         actions.addView(outbound, new LinearLayout.LayoutParams(-1, dp(52)));
@@ -985,12 +1023,13 @@ private int tab = 0;
     private void showBookmarks() {
         updateGroupFab();
         content.removeAllViews();
-        content.addView(pageTitle("Bookmarks"));
-        content.addView(text("Nearest stop is selected from your current GPS position.", 15, MUTED, false));
+        content.addView(pageTitle(t("Bookmarks")));
+        content.addView(text(t("Nearest stop is selected from your current GPS position."), 15, MUTED, false));
         content.addView(groupControls());
 
         ScrollView scroll = new ScrollView(this);
         applyCardScrollFade(scroll);
+        attachPullToRefresh(scroll);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list);
@@ -1035,15 +1074,11 @@ private int tab = 0;
             trackingButtons.put(b.storageKey(), tracking);
             header.addView(groupPill(b.group));
             box.addView(header);
-
-            TextView direction = text(b.from + "  ->  " + b.to, 15, TEXT, false);
-            direction.setPadding(dp(14), dp(10), dp(14), dp(10));
-            direction.setBackground(round(fieldSurface(), dp(14), outline()));
             LinearLayout.LayoutParams dpv = new LinearLayout.LayoutParams(-1, -2);
             dpv.setMargins(0, dp(12), 0, dp(10));
-            box.addView(direction, dpv);
+            box.addView(routeEndsView(b.from, b.to), dpv);
 
-            TextView nearest = text("Nearest stop loading", 13, MUTED, false);
+            TextView nearest = text(t("Nearest stop loading"), 13, MUTED, false);
             box.addView(nearest);
 
             LinearLayout etaRow = etaBoxRow(null);
@@ -1180,7 +1215,7 @@ private int tab = 0;
                 runOnUiThread(() -> {
                     TextView stop = previewStopViews.get(b.storageKey());
                     LinearLayout eta = previewEtaViews.get(b.storageKey());
-                    if (stop != null) stop.setText("Arrival preview unavailable");
+                    if (stop != null) stop.setText(t("Arrival preview unavailable"));
                     if (eta != null) renderEtaBoxes(eta, new ArrayList<>());
                 });
             }
@@ -1264,7 +1299,7 @@ private int tab = 0;
         rootRow.addView(scroll, new LinearLayout.LayoutParams(0, dp(48), 1));
 
         if (groupOrderMode) {
-            Button done = materialButton("Done");
+            Button done = materialButton(t("Done"));
             done.setOnClickListener(v -> {
                 groupOrderMode = false;
                 showBookmarks();
@@ -1689,11 +1724,12 @@ private int tab = 0;
         b.setPadding(dp(10), dp(10), dp(10), dp(10));
         b.setBackground(round(fill, radius, stroke));
         if (Build.VERSION.SDK_INT >= 21) b.setStateListAnimator(null);
+        applyExpressivePress(b);
         return b;
     }
 
     private Button trackingButton(Bookmark bookmark) {
-        Button b = materialButton("Track");
+        Button b = materialButton(t("Track"));
         b.setTextSize(12);
         b.setPadding(dp(14), 0, dp(14), 0);
         b.setOnClickListener(v -> {
@@ -1713,7 +1749,7 @@ private int tab = 0;
 
     private void updateTrackingButton(Button button, Bookmark bookmark) {
         boolean tracking = isTracking(bookmark);
-        button.setText(tracking ? "Cancel" : "Track");
+        button.setText(tracking ? t("Cancel Tracking") : t("Track"));
         button.setTextColor(tracking ? Color.WHITE : buttonText());
         button.setBackground(round(tracking ? BLUE : menuButtonSurface(), dp(16), Color.TRANSPARENT));
         button.setContentDescription(tracking ? "Stop live tracking" : "Start live tracking");
@@ -1790,6 +1826,156 @@ private int tab = 0;
     }
 
 
+
+    private String t(String en) {
+        if (!"zh".equals(prefs == null ? "en" : prefs.getString("language", "en"))) return en;
+        switch (en) {
+            case "Bookmarks": return "\u6536\u85cf";
+            case "Routes": return "\u8def\u7dda";
+            case "Search": return "\u641c\u5c0b";
+            case "Theme": return "\u4e3b\u984c";
+            case "Use Background Image": return "\u4f7f\u7528\u80cc\u666f\u5716\u7247";
+            case "Remove Background": return "\u79fb\u9664\u80cc\u666f";
+            case "Languages": return "\u8a9e\u8a00";
+            case "About": return "\u95dc\u65bc";
+            case "Menu": return "\u9078\u55ae";
+            case "New Route": return "\u65b0\u589e\u8def\u7dda";
+            case "Route name": return "\u8def\u7dda\u540d\u7a31";
+            case "Done": return "\u5b8c\u6210";
+            case "Cancel": return "\u53d6\u6d88";
+            case "Delete": return "\u522a\u9664";
+            case "Rename": return "\u91cd\u65b0\u547d\u540d";
+            case "Edit": return "\u7de8\u8f2f";
+            case "Expand": return "\u5c55\u958b";
+            case "Collapse": return "\u6536\u8d77";
+            case "Track": return "\u8ffd\u8e64";
+            case "Cancel Tracking": return "\u53d6\u6d88\u8ffd\u8e64";
+            case "Save Route in This Direction": return "\u5132\u5b58\u6b64\u65b9\u5411";
+            case "Save Route in Opposite Direction": return "\u5132\u5b58\u53cd\u65b9\u5411";
+            case "Save Both Directions": return "\u5132\u5b58\u96d9\u65b9\u5411";
+            case "Find KMB, Citybus, and MTR Bus routes, then save either direction.": return "\u641c\u5c0b\u4e5d\u5df4\u3001\u57ce\u5df4\u3001\u6e2f\u9435\u5df4\u58eb\u53ca\u5dbc\u5df4\u8def\u7dda\uff0c\u7136\u5f8c\u5132\u5b58\u65b9\u5411\u3002";
+            case "Nearest stop is selected from your current GPS position.": return "\u6703\u6839\u64da\u76ee\u524d GPS \u4f4d\u7f6e\u9078\u64c7\u6700\u8fd1\u8eca\u7ad9\u3002";
+            case "Build named journeys from chained bus route cards.": return "\u4ee5\u4e32\u63a5\u5df4\u58eb\u8def\u7dda\u5361\u5efa\u7acb\u81ea\u8a02\u884c\u7a0b\u3002";
+            case "Tap + to create a route.": return "\u9ede\u6309 + \u5efa\u7acb\u8def\u7dda\u3002";
+            case "No bus routes added yet": return "\u5c1a\u672a\u52a0\u5165\u5df4\u58eb\u8def\u7dda";
+            case "Add Bus Route": return "\u52a0\u5165\u5df4\u58eb\u8def\u7dda";
+            case "Bus Route": return "\u5df4\u58eb\u8def\u7dda";
+            case "Remove Bus Route": return "\u79fb\u9664\u5df4\u58eb\u8def\u7dda";
+            case "Add Bus Route Above": return "\u5728\u4e0a\u65b9\u52a0\u5165\u5df4\u58eb\u8def\u7dda";
+            case "Add Bus Route Below": return "\u5728\u4e0b\u65b9\u52a0\u5165\u5df4\u58eb\u8def\u7dda";
+            case "Select Bus Route": return "\u9078\u64c7\u5df4\u58eb\u8def\u7dda";
+            case "Loading Bus Route": return "\u6b63\u5728\u8f09\u5165\u5df4\u58eb\u8def\u7dda";
+            case "Loading bus route stops...": return "\u6b63\u5728\u8f09\u5165\u5df4\u58eb\u7ad9...";
+            case "Starting Stop": return "\u8d77\u9ede\u7ad9";
+            case "Ending Stop": return "\u7d42\u9ede\u7ad9";
+            case "Terminal Stop": return "\u7d42\u9ede\u7ad9";
+            case "Search bus route": return "\u641c\u5c0b\u5df4\u58eb\u8def\u7dda";
+            case "Search stop": return "\u641c\u5c0b\u8eca\u7ad9";
+            case "Search bus stop": return "\u641c\u5c0b\u5df4\u58eb\u7ad9";
+            case "No matching routes": return "\u6c92\u6709\u76f8\u7b26\u8def\u7dda";
+            case "No matching stops": return "\u6c92\u6709\u76f8\u7b26\u8eca\u7ad9";
+            case "Loading": return "\u8f09\u5165\u4e2d";
+            case "Loading routes...": return "\u6b63\u5728\u8f09\u5165\u8def\u7dda...";
+            case "Arrival preview unavailable": return "\u672a\u80fd\u8f09\u5165\u5230\u7ad9\u9810\u89bd";
+            case "Nearest stop loading": return "\u6b63\u5728\u8f09\u5165\u6700\u8fd1\u8eca\u7ad9";
+            case "No upcoming arrivals": return "\u6c92\u6709\u5373\u5c07\u5230\u7ad9\u73ed\u6b21";
+            case "No live arrival data": return "\u6c92\u6709\u5373\u6642\u5230\u7ad9\u8cc7\u6599";
+            case "Check for updates": return "\u6aa2\u67e5\u66f4\u65b0";
+            case "Current version: ": return "\u76ee\u524d\u7248\u672c\uff1a";
+            case "Download and install": return "\u4e0b\u8f09\u4e26\u5b89\u88dd";
+            case "Update Available": return "\u6709\u53ef\u7528\u66f4\u65b0";
+            case "Route number or destination": return "\u8def\u7dda\u865f\u78bc\u6216\u76ee\u7684\u5730";
+            case "Chinese": return "\u4e2d\u6587";
+            case "English": return "English";
+            default: return en;
+        }
+    }
+
+    private void attachPullToRefresh(ScrollView scroll) {
+        scroll.setOnTouchListener((v, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    refreshDownY = event.getRawY();
+                    refreshTriggered = false;
+                    return false;
+                case MotionEvent.ACTION_MOVE:
+                    if (scroll.getScrollY() <= 0 && refreshDownY >= 0) {
+                        float delta = event.getRawY() - refreshDownY;
+                        if (delta > 0) scroll.setTranslationY(Math.min(dp(72), delta / 3f));
+                    }
+                    return false;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    float pulled = scroll.getTranslationY();
+                    scroll.animate().translationY(0).setDuration(180).setInterpolator(new DecelerateInterpolator()).start();
+                    if (!refreshTriggered && pulled >= dp(42)) {
+                        refreshTriggered = true;
+                        refreshCurrentTab();
+                    }
+                    refreshDownY = -1f;
+                    return false;
+                default:
+                    return false;
+            }
+        });
+    }
+
+    private void refreshCurrentTab() {
+        updateLocation();
+        Toast.makeText(this, "zh".equals(prefs.getString("language", "en")) ? "\u6b63\u5728\u91cd\u65b0\u6574\u7406" : "Refreshing", Toast.LENGTH_SHORT).show();
+        if (tab == 2) {
+            routes.clear();
+            showSearch();
+            loadRoutes();
+        } else {
+            showCurrentTab();
+        }
+    }
+
+    private void applyExpressivePress(View v) {
+        v.setClickable(true);
+        if (Build.VERSION.SDK_INT >= 23) {
+            v.setForeground(new RippleDrawable(ColorStateList.valueOf(Color.argb(70, Color.red(BLUE), Color.green(BLUE), Color.blue(BLUE))), null, new ColorDrawable(Color.WHITE)));
+        }
+        v.setOnTouchListener((view, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    view.animate().scaleX(0.965f).scaleY(0.965f).alpha(0.92f).setDuration(95).setInterpolator(new DecelerateInterpolator()).start();
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    view.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(210).setInterpolator(new DecelerateInterpolator()).start();
+                    break;
+            }
+            return false;
+        });
+    }
+
+    private View routeEndsView(String startLabel, String endLabel) {
+        LinearLayout wrap = new LinearLayout(this);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        wrap.setGravity(Gravity.CENTER_HORIZONTAL);
+        wrap.addView(stopBox(startLabel, true), new LinearLayout.LayoutParams(-1, -2));
+        View line = new View(this);
+        line.setBackgroundColor(tint(BLUE, 0.55f));
+        LinearLayout.LayoutParams lineLp = new LinearLayout.LayoutParams(dp(2), dp(24));
+        lineLp.setMargins(0, dp(8), 0, dp(8));
+        wrap.addView(line, lineLp);
+        wrap.addView(stopBox(endLabel, false), new LinearLayout.LayoutParams(-1, -2));
+        return wrap;
+    }
+
+    private TextView stopBox(String label, boolean strong) {
+        TextView box = text(label == null ? "" : label, strong ? 15 : 14, strong ? TEXT : MUTED, strong);
+        box.setGravity(Gravity.CENTER);
+        box.setMinHeight(dp(52));
+        box.setPadding(dp(16), dp(10), dp(16), dp(10));
+        box.setBackground(round(fieldSurface(), dp(18), outline()));
+        box.setEllipsize(TextUtils.TruncateAt.END);
+        box.setMaxLines(2);
+        return box;
+    }
+
     private void updateGroupFab() {
         boolean detailOpen = navIsland != null && navIsland.getVisibility() != View.VISIBLE;
         if (groupFab != null) {
@@ -1807,18 +1993,21 @@ private int tab = 0;
     }
 
     private void showMainMenuSheet() {
-        List<String> items = new ArrayList<>();
-        items.add("Theme");
-        items.add("Use Background Image");
-        if (hasCustomBackground()) items.add("Remove Background");
-        items.add("Languages");
-        items.add("About");
-        showOptionSheet("Menu", items.toArray(new String[0]), (index, label) -> {
-            if ("Theme".equals(label)) showThemeSheet();
-            else if ("Use Background Image".equals(label)) pickCustomBackground();
-            else if ("Remove Background".equals(label)) removeCustomBackground();
-            else if ("About".equals(label)) showAboutSheet();
-            else showInfoSheet(label, label + " will be available later.");
+        List<String> keys = new ArrayList<>();
+        keys.add("Theme");
+        keys.add("Use Background Image");
+        if (hasCustomBackground()) keys.add("Remove Background");
+        keys.add("Languages");
+        keys.add("About");
+        String[] labels = new String[keys.size()];
+        for (int i = 0; i < keys.size(); i++) labels[i] = t(keys.get(i));
+        showOptionSheet(t("Menu"), labels, (index, label) -> {
+            String key = keys.get(index);
+            if ("Theme".equals(key)) showThemeSheet();
+            else if ("Use Background Image".equals(key)) pickCustomBackground();
+            else if ("Remove Background".equals(key)) removeCustomBackground();
+            else if ("Languages".equals(key)) showLanguageSheet();
+            else if ("About".equals(key)) showAboutSheet();
         });
     }
 
@@ -1865,6 +2054,16 @@ private int tab = 0;
         }
     }
 
+
+    private void showLanguageSheet() {
+        String[] labels = {t("English"), t("Chinese")};
+        showOptionSheet(t("Languages"), labels, (index, label) -> {
+            prefs.edit().putString("language", index == 1 ? "zh" : "en").apply();
+            renderNav();
+            showCurrentTab();
+        });
+    }
+
     private void showThemeSheet() {
         String[] names = {"Follow System", "Blue", "Teal", "Green", "Orange", "Pink", "Purple"};
         int[] colors = {BLUE, Color.rgb(10, 132, 255), Color.rgb(64, 200, 224), Color.rgb(48, 209, 88), Color.rgb(255, 159, 10), Color.rgb(255, 55, 95), Color.rgb(191, 90, 242)};
@@ -1880,10 +2079,10 @@ private int tab = 0;
     private void showAboutSheet() {
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
-        TextView version = text("Current version: " + currentVersionName(), 16, TEXT, true);
+        TextView version = text(t("Current version: ") + currentVersionName(), 16, TEXT, true);
         body.addView(version);
         TextView status = text("", 14, MUTED, false);
-        Button check = sheetButton("Check for updates");
+        Button check = sheetButton(t("Check for updates"));
         check.setOnClickListener(v -> checkForRelease(status, check));
         body.addView(check, new LinearLayout.LayoutParams(-1, dp(56)));
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
@@ -1970,13 +2169,13 @@ private int tab = 0;
         fp.setMargins(0, dp(8), 0, dp(14));
         body.addView(file, fp);
         TextView status = text("", 14, MUTED, false);
-        Button download = sheetButton("Download and install");
+        Button download = sheetButton(t("Download and install"));
         download.setOnClickListener(v -> downloadAndInstallApk(apkUrl, apkName, status));
         body.addView(download, new LinearLayout.LayoutParams(-1, dp(56)));
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
         sp.setMargins(0, dp(12), 0, 0);
         body.addView(status, sp);
-        showBottomSheet("Update Available", body);
+        showBottomSheet(t("Update Available"), body);
     }
 
     private void downloadAndInstallApk(String apkUrl, String apkName, TextView status) {
@@ -2121,7 +2320,7 @@ private int tab = 0;
         body.setOrientation(LinearLayout.VERTICAL);
         EditText search = new EditText(this);
         search.setSingleLine(true);
-        search.setHint("Search stop");
+        search.setHint(t("Search stop"));
         search.setHintTextColor(MUTED);
         search.setTextColor(TEXT);
         search.setTextSize(16);
@@ -2160,7 +2359,7 @@ private int tab = 0;
                 shown++;
                 if (!filtering && shown >= 160) break;
             }
-            if (shown == 0) list.addView(centerStatus("No matching stops"));
+            if (shown == 0) list.addView(centerStatus(t("No matching stops")));
         };
         search.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
@@ -2206,7 +2405,7 @@ private int tab = 0;
         body.setOrientation(LinearLayout.VERTICAL);
         EditText search = new EditText(this);
         search.setSingleLine(true);
-        search.setHint("Search bus stop");
+        search.setHint(t("Search bus stop"));
         search.setHintTextColor(MUTED);
         search.setTextColor(TEXT);
         search.setTextSize(16);
@@ -2243,7 +2442,7 @@ private int tab = 0;
                 shown++;
                 if (!filtering && shown >= 120) break;
             }
-            if (shown == 0) list.addView(centerStatus("No matching stops"));
+            if (shown == 0) list.addView(centerStatus(t("No matching stops")));
         };
         search.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
@@ -2272,7 +2471,7 @@ private int tab = 0;
         body.setOrientation(LinearLayout.VERTICAL);
         EditText search = new EditText(this);
         search.setSingleLine(true);
-        search.setHint("Search bus route");
+        search.setHint(t("Search bus route"));
         search.setHintTextColor(MUTED);
         search.setTextColor(TEXT);
         search.setTextSize(16);
@@ -2308,7 +2507,7 @@ private int tab = 0;
                 shown++;
                 if (q.isEmpty() && shown >= 80) break;
             }
-            if (shown == 0) list.addView(centerStatus("No matching routes"));
+            if (shown == 0) list.addView(centerStatus(t("No matching routes")));
         };
         search.addTextChangedListener(new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
@@ -2333,7 +2532,7 @@ private int tab = 0;
         input.setPadding(dp(18), 0, dp(18), 0);
         input.setBackground(round(fieldSurface(), dp(18), tint(BLUE, 0.45f)));
         body.addView(input, new LinearLayout.LayoutParams(-1, dp(58)));
-        Button save = sheetButton("Done");
+        Button save = sheetButton(t("Done"));
         save.setOnClickListener(v -> {
             dismissSheet();
             handler.onText(input.getText().toString());
@@ -2428,12 +2627,12 @@ private int tab = 0;
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         body.addView(text(message, 16, MUTED, false));
-        Button cancel = sheetButton("Cancel");
+        Button cancel = sheetButton(t("Cancel"));
         cancel.setOnClickListener(v -> dismissSheet());
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, dp(56));
         cp.setMargins(0, dp(16), 0, dp(8));
         body.addView(cancel, cp);
-        Button delete = sheetButton("Delete");
+        Button delete = sheetButton(t("Delete"));
         delete.setTextColor(Color.WHITE);
         delete.setBackground(round(Color.rgb(196, 58, 58), dp(28), Color.TRANSPARENT));
         delete.setOnClickListener(v -> {
@@ -2456,6 +2655,7 @@ private int tab = 0;
         b.setMinHeight(0);
         b.setMinWidth(0);
         b.setBackground(round(menuButtonSurface(), dp(28), Color.TRANSPARENT));
+        applyExpressivePress(b);
         return b;
     }
 
@@ -2471,6 +2671,7 @@ private int tab = 0;
         b.setMinHeight(0);
         b.setMinWidth(0);
         b.setBackground(round(menuButtonSurface(), dp(28), Color.TRANSPARENT));
+        applyExpressivePress(b);
         return b;
     }
     private void saveBookmark(Bookmark b) {
@@ -2695,6 +2896,7 @@ private int tab = 0;
         }
         Bookmark bookmark() { return new Bookmark(operator, route, dir, serviceType, from, to, "Ungrouped"); }
         Stop startStop() { return new Stop(startStopId, startName, startSeq, startLat, startLon); }
+        Stop endStop() { return new Stop(endStopId, endName, endSeq, endLat, endLon); }
         JSONObject toJson() throws Exception {
             JSONObject o = new JSONObject();
             o.put("operator", operator); o.put("route", route); o.put("dir", dir); o.put("serviceType", serviceType); o.put("from", from); o.put("to", to);
