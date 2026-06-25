@@ -3,6 +3,7 @@ package com.example.hkbus;
 import android.Manifest;
 import android.app.Activity;
 import android.app.DownloadManager;
+import android.app.NotificationManager;
 import android.content.Context;
 import android.content.BroadcastReceiver;
 import android.content.IntentFilter;
@@ -12,6 +13,7 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.Insets;
 import android.graphics.RenderEffect;
 import android.graphics.Shader;
 import android.location.Location;
@@ -27,7 +29,9 @@ import android.view.DragEvent;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -57,6 +61,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -89,6 +94,9 @@ public class MainActivity extends Activity {
     private final Map<String, TextView> previewStopViews = new HashMap<>();
     private final Map<String, Button> trackingButtons = new HashMap<>();
     private final Set<String> expandedCustomRoutes = new HashSet<>();
+    private final Map<String, List<Stop>> routeStopCache = new HashMap<>();
+    private final List<Stop> allStops = new ArrayList<>();
+    private boolean allStopsLoading = false;
     private boolean trackingReceiverRegistered = false;
     private final BroadcastReceiver trackingStoppedReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) { updateTrackingButtons(); }
@@ -100,6 +108,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         prefs = getSharedPreferences("hkbus", MODE_PRIVATE);
         loadThemeColor();
         maybeAskLocation();
@@ -206,7 +215,7 @@ public class MainActivity extends Activity {
         updateGroupFab();
         content.removeAllViews();
         content.addView(pageTitle("Routes"));
-        content.addView(text("Build named journeys from one or more saved bus legs.", 15, MUTED, false));
+        content.addView(text("Build named journeys from one stop to another.", 15, MUTED, false));
 
         ScrollView scroll = new ScrollView(this);
         applyCardScrollFade(scroll);
@@ -234,8 +243,36 @@ public class MainActivity extends Activity {
             String name = value == null ? "" : value.trim();
             if (name.length() == 0) return;
             CustomRoute customRoute = new CustomRoute(String.valueOf(System.currentTimeMillis()), name, new ArrayList<>());
-            saveCustomRoute(customRoute);
-            showCustomRouteEditor(customRoute);
+            chooseJourneyStartStop(customRoute);
+        });
+    }
+
+    private void chooseJourneyStartStop(CustomRoute customRoute) {
+        showGlobalStopPickerSheet("Starting Bus Stop", stop -> chooseJourneyEndStop(customRoute, stop));
+    }
+
+    private void chooseJourneyEndStop(CustomRoute customRoute, Stop start) {
+        showGlobalStopPickerSheet("Ending Bus Stop", stop -> generateCustomRoutePath(customRoute, start, stop));
+    }
+
+    private void generateCustomRoutePath(CustomRoute customRoute, Stop start, Stop end) {
+        showLoadingSheet("Finding Route", "Finding the shortest bus path...");
+        io.execute(() -> {
+            try {
+                List<CustomRouteLeg> legs = findShortestBusPath(start, end);
+                runOnUiThread(() -> {
+                    dismissSheet();
+                    if (legs.isEmpty()) {
+                        showInfoSheet("Route", "No bus path was found between those stops.");
+                        return;
+                    }
+                    customRoute.legs.clear();
+                    customRoute.legs.addAll(legs);
+                    showCustomRouteEditor(customRoute);
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> showInfoSheet("Route", "Could not generate route: " + e.getMessage()));
+            }
         });
     }
 
@@ -261,9 +298,9 @@ public class MainActivity extends Activity {
                 for (CustomRouteLeg leg : customRoute.legs) {
                     View legCard = customRouteLegCard(leg, false);
                     if (first) {
-                        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-                        lp.setMargins(0, dp(12), 0, dp(12));
-                        legCard.setLayoutParams(lp);
+                        LinearLayout.LayoutParams firstLp = new LinearLayout.LayoutParams(-1, -2);
+                        firstLp.setMargins(0, dp(12), 0, dp(12));
+                        legCard.setLayoutParams(firstLp);
                         first = false;
                     }
                     box.addView(legCard);
@@ -352,21 +389,24 @@ public class MainActivity extends Activity {
     }
 
     private void showCustomRouteEditor(CustomRoute customRoute) {
-        navIsland.setVisibility(View.GONE);
+        if (navIsland != null) navIsland.setVisibility(View.GONE);
         if (groupFab != null) groupFab.setVisibility(View.GONE);
-        if (topMenu != null) topMenu.setVisibility(View.VISIBLE);
+        if (topMenu != null) topMenu.setVisibility(View.GONE);
         content.removeAllViews();
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        Button back = materialButton("Back");
-        back.setOnClickListener(v -> {
-            navIsland.setVisibility(View.VISIBLE);
+        TextView title = text(customRoute.name, 24, TEXT, true);
+        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        Button done = materialButton("Done");
+        done.setOnClickListener(v -> {
+            saveCustomRoute(customRoute);
+            if (navIsland != null) navIsland.setVisibility(View.VISIBLE);
+            if (topMenu != null) topMenu.setVisibility(View.VISIBLE);
+            tab = 1;
             showRoutes();
         });
-        header.addView(back, new LinearLayout.LayoutParams(dp(86), dp(42)));
-        TextView title = text("  " + customRoute.name, 24, TEXT, true);
-        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        header.addView(done, new LinearLayout.LayoutParams(dp(96), dp(44)));
         content.addView(header);
 
         ScrollView scroll = new ScrollView(this);
@@ -379,21 +419,31 @@ public class MainActivity extends Activity {
         content.addView(scroll, lp);
 
         if (customRoute.legs.isEmpty()) {
-            TextView intro = centerStatus("Add the first bus route for this route.");
-            list.addView(intro);
+            list.addView(centerStatus("No bus routes in this path."));
         } else {
-            for (CustomRouteLeg leg : customRoute.legs) list.addView(customRouteLegCard(leg, true));
+            for (int i = 0; i < customRoute.legs.size(); i++) {
+                final int index = i;
+                View card = customRouteLegCard(customRoute.legs.get(i), true);
+                card.setOnLongClickListener(v -> {
+                    showCustomRouteLegMenu(customRoute, index);
+                    return true;
+                });
+                list.addView(card);
+            }
         }
-        list.addView(addRouteLegButton(customRoute));
     }
 
-    private View addRouteLegButton(CustomRoute customRoute) {
-        Button add = materialButton(customRoute.legs.isEmpty() ? "Add First Bus Route" : "Add Another Bus Route");
-        add.setOnClickListener(v -> beginAddRouteLeg(customRoute));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(58));
-        lp.setMargins(0, dp(16), 0, dp(18));
-        add.setLayoutParams(lp);
-        return add;
+    private void showCustomRouteLegMenu(CustomRoute customRoute, int index) {
+        showOptionSheet("Bus Route", new String[]{"Remove Bus Route", "Add Bus Route Above", "Add Bus Route Below"}, (choiceIndex, choice) -> {
+            if ("Remove Bus Route".equals(choice)) {
+                if (index >= 0 && index < customRoute.legs.size()) customRoute.legs.remove(index);
+                showCustomRouteEditor(customRoute);
+            } else if ("Add Bus Route Above".equals(choice)) {
+                beginAddRouteLegAt(customRoute, Math.max(0, index));
+            } else if ("Add Bus Route Below".equals(choice)) {
+                beginAddRouteLegAt(customRoute, Math.min(customRoute.legs.size(), index + 1));
+            }
+        });
     }
 
     private void showCreateRouteFlow(CustomRoute editing) {
@@ -401,40 +451,37 @@ public class MainActivity extends Activity {
         else showCustomRouteEditor(editing);
     }
 
-    private void beginAddRouteLeg(CustomRoute customRoute) {
+    private void beginAddRouteLegAt(CustomRoute customRoute, int insertIndex) {
         if (routes.isEmpty()) { showInfoSheet("Routes", "Routes are still loading."); return; }
         List<Route> choices = new ArrayList<>(routes);
         Collections.sort(choices, Comparator.comparing((Route r) -> r.route.length()).thenComparing(r -> r.route));
-        int limit = Math.min(choices.size(), 120);
-        String[] labels = new String[limit];
-        for (int i = 0; i < limit; i++) labels[i] = choices.get(i).route + " " + opName(choices.get(i).operator) + "  " + choices.get(i).orig + " -> " + choices.get(i).dest;
-        showRoutePickerSheet("Select Bus Route", choices.subList(0, limit), route -> chooseRouteStops(route, customRoute));
+        showRoutePickerSheet("Select Bus Route", choices, route -> chooseRouteStops(route, customRoute, insertIndex));
     }
 
-    private void chooseRouteStops(Route route, CustomRoute customRoute) {
+    private void chooseRouteStops(Route route, CustomRoute customRoute, int insertIndex) {
         showLoadingSheet("Loading Bus Route", "Loading bus route stops...");
         Bookmark b = new Bookmark(route.operator, route.route, "outbound", route.serviceType, route.orig, route.dest, "Ungrouped");
         io.execute(() -> {
             try {
-                List<Stop> stops = api.routeStops(b);
-                runOnUiThread(() -> chooseStartStop(route, stops, customRoute));
+                List<Stop> stops = cachedRouteStops(route, "outbound");
+                runOnUiThread(() -> chooseStartStop(route, stops, customRoute, insertIndex));
             } catch (Exception e) {
                 runOnUiThread(() -> showInfoSheet("Route", "Could not load stops: " + e.getMessage()));
             }
         });
     }
 
-    private void chooseStartStop(Route route, List<Stop> stops, CustomRoute customRoute) {
-        showStopPickerSheet("Starting Stop", stops, (startIndex, label) -> chooseEndStop(route, stops, startIndex, customRoute));
+    private void chooseStartStop(Route route, List<Stop> stops, CustomRoute customRoute, int insertIndex) {
+        showStopPickerSheet("Starting Stop", stops, (startIndex, label) -> chooseEndStop(route, stops, startIndex, customRoute, insertIndex));
     }
 
-    private void chooseEndStop(Route route, List<Stop> stops, int startIndex, CustomRoute customRoute) {
+    private void chooseEndStop(Route route, List<Stop> stops, int startIndex, CustomRoute customRoute, int insertIndex) {
         showStopPickerSheet("Ending Stop", stops, (endIndex, label) -> {
             Stop start = stops.get(startIndex);
             Stop end = stops.get(endIndex);
             CustomRouteLeg leg = new CustomRouteLeg(route.operator, route.route, "outbound", route.serviceType, route.orig, route.dest, start.id, start.name, start.seq, start.lat, start.lon, end.id, end.name, end.seq, end.lat, end.lon);
-            customRoute.legs.add(leg);
-            saveCustomRoute(customRoute);
+            int safeIndex = Math.max(0, Math.min(insertIndex, customRoute.legs.size()));
+            customRoute.legs.add(safeIndex, leg);
             showCustomRouteEditor(customRoute);
         });
     }
@@ -461,6 +508,141 @@ public class MainActivity extends Activity {
             }
         }
         return best;
+    }
+
+    private List<CustomRouteLeg> findShortestBusPath(Stop start, Stop end) throws Exception {
+        List<RoutePattern> patterns = loadRoutePatterns();
+        Map<String, List<PatternStop>> grid = buildPatternGrid(patterns);
+        PriorityQueue<PathState> queue = new PriorityQueue<>((a, b) -> {
+            if (a.transfers != b.transfers) return a.transfers - b.transfers;
+            if (a.stops != b.stops) return a.stops - b.stops;
+            return a.legs.size() - b.legs.size();
+        });
+        for (PatternStop candidate : nearbyPatternStops(grid, start, 450)) {
+            RoutePattern pattern = patterns.get(candidate.patternIndex);
+            if (distanceMeters(pattern.stops.get(candidate.stopIndex), start) > 450) continue;
+            if (candidate.stopIndex < pattern.stops.size() - 1) {
+                queue.add(new PathState(candidate.patternIndex, candidate.stopIndex, 0, 0, new ArrayList<>()));
+            }
+        }
+        Map<String, Integer> best = new HashMap<>();
+        int explored = 0;
+        while (!queue.isEmpty() && explored < 12000) {
+            explored++;
+            PathState state = queue.poll();
+            String key = state.patternIndex + ":" + state.stopIndex + ":" + state.transfers;
+            Integer prev = best.get(key);
+            if (prev != null && prev <= state.stops) continue;
+            best.put(key, state.stops);
+            RoutePattern pattern = patterns.get(state.patternIndex);
+            int endIndex = firstReachableIndex(pattern, end, state.stopIndex + 1, 450);
+            if (endIndex >= 0) {
+                List<CustomRouteLeg> legs = new ArrayList<>(state.legs);
+                legs.add(legFrom(pattern, state.stopIndex, endIndex));
+                return legs;
+            }
+            if (state.transfers >= 2) continue;
+            for (int alight = state.stopIndex + 1; alight < pattern.stops.size(); alight++) {
+                Stop transferStop = pattern.stops.get(alight);
+                if (transferStop.lat == 0 && transferStop.lon == 0) continue;
+                int rideStops = alight - state.stopIndex;
+                List<CustomRouteLeg> ridden = new ArrayList<>(state.legs);
+                ridden.add(legFrom(pattern, state.stopIndex, alight));
+                for (PatternStop next : nearbyPatternStops(grid, transferStop, 260)) {
+                    if (next.patternIndex == state.patternIndex) continue;
+                    RoutePattern nextPattern = patterns.get(next.patternIndex);
+                    if (distanceMeters(nextPattern.stops.get(next.stopIndex), transferStop) > 260) continue;
+                    if (next.stopIndex >= nextPattern.stops.size() - 1) continue;
+                    queue.add(new PathState(next.patternIndex, next.stopIndex, state.transfers + 1, state.stops + rideStops, ridden));
+                }
+            }
+        }
+        return new ArrayList<>();
+    }
+
+    private List<RoutePattern> loadRoutePatterns() throws Exception {
+        List<RoutePattern> patterns = new ArrayList<>();
+        for (Route route : routes) {
+            if ("MTR".equals(route.operator)) continue;
+            addRoutePattern(patterns, route, "outbound");
+            addRoutePattern(patterns, route, "inbound");
+        }
+        return patterns;
+    }
+
+    private void addRoutePattern(List<RoutePattern> patterns, Route route, String dir) {
+        try {
+            List<Stop> stops = cachedRouteStops(route, dir);
+            if (stops.size() > 1) patterns.add(new RoutePattern(route, dir, stops));
+        } catch (Exception ignored) {}
+    }
+
+    private List<Stop> cachedRouteStops(Route route, String dir) throws Exception {
+        String key = route.operator + "|" + route.route + "|" + dir + "|" + route.serviceType;
+        synchronized (routeStopCache) {
+            if (routeStopCache.containsKey(key)) return routeStopCache.get(key);
+        }
+        String from = "inbound".equals(dir) ? route.dest : route.orig;
+        String to = "inbound".equals(dir) ? route.orig : route.dest;
+        Bookmark b = new Bookmark(route.operator, route.route, dir, route.serviceType, from, to, "Ungrouped");
+        List<Stop> stops = api.routeStops(b);
+        synchronized (routeStopCache) { routeStopCache.put(key, stops); }
+        return stops;
+    }
+
+    private Map<String, List<PatternStop>> buildPatternGrid(List<RoutePattern> patterns) {
+        Map<String, List<PatternStop>> grid = new HashMap<>();
+        for (int p = 0; p < patterns.size(); p++) {
+            List<Stop> stops = patterns.get(p).stops;
+            for (int i = 0; i < stops.size(); i++) {
+                Stop stop = stops.get(i);
+                if (stop.lat == 0 && stop.lon == 0) continue;
+                String key = gridKey(stop.lat, stop.lon);
+                if (!grid.containsKey(key)) grid.put(key, new ArrayList<>());
+                grid.get(key).add(new PatternStop(p, i));
+            }
+        }
+        return grid;
+    }
+
+    private List<PatternStop> nearbyPatternStops(Map<String, List<PatternStop>> grid, Stop stop, double meters) {
+        List<PatternStop> out = new ArrayList<>();
+        if (stop.lat == 0 && stop.lon == 0) return out;
+        int lat = gridBucket(stop.lat);
+        int lon = gridBucket(stop.lon);
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                List<PatternStop> cell = grid.get((lat + dy) + ":" + (lon + dx));
+                if (cell != null) out.addAll(cell);
+            }
+        }
+        return out;
+    }
+
+    private int firstReachableIndex(RoutePattern pattern, Stop target, int startIndex, double meters) {
+        for (int i = Math.max(0, startIndex); i < pattern.stops.size(); i++) {
+            if (distanceMeters(pattern.stops.get(i), target) <= meters) return i;
+        }
+        return -1;
+    }
+
+    private CustomRouteLeg legFrom(RoutePattern pattern, int startIndex, int endIndex) {
+        Stop start = pattern.stops.get(startIndex);
+        Stop end = pattern.stops.get(endIndex);
+        Route route = pattern.route;
+        String from = "inbound".equals(pattern.dir) ? route.dest : route.orig;
+        String to = "inbound".equals(pattern.dir) ? route.orig : route.dest;
+        return new CustomRouteLeg(route.operator, route.route, pattern.dir, route.serviceType, from, to, start.id, start.name, start.seq, start.lat, start.lon, end.id, end.name, end.seq, end.lat, end.lon);
+    }
+
+    private static int gridBucket(double value) { return (int) Math.floor(value * 400); }
+    private static String gridKey(double lat, double lon) { return gridBucket(lat) + ":" + gridBucket(lon); }
+    private static double distanceMeters(Stop a, Stop b) {
+        if (a.lat == 0 && a.lon == 0) return Double.MAX_VALUE;
+        if (b.lat == 0 && b.lon == 0) return Double.MAX_VALUE;
+        float[] out = new float[1];
+        Location.distanceBetween(a.lat, a.lon, b.lat, b.lon, out);
+        return out[0];
     }
 
     private void loadFirstEtaInto(CustomRouteLeg leg, TextView target) {
@@ -1230,6 +1412,7 @@ public class MainActivity extends Activity {
 
     interface OptionHandler { void onSelect(int index, String label); }
     interface RouteOptionHandler { void onSelect(Route route); }
+    interface StopSelectHandler { void onSelect(Stop stop); }
     interface TextHandler { void onText(String value); }
 
     private void loadThemeColor() {
@@ -1369,7 +1552,37 @@ public class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 42);
             return false;
         }
+        if (Build.VERSION.SDK_INT >= 36) {
+            NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            if (manager != null && !manager.canPostPromotedNotifications()) {
+                showPromotedNotificationsSheet();
+                return false;
+            }
+        }
         return true;
+    }
+
+    private void showPromotedNotificationsSheet() {
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.addView(text("Enable Live Updates for HK Bus so tracking can appear as an Android 16 live update instead of a regular notification.", 16, MUTED, false));
+        Button open = sheetButton("Open Live Update Settings");
+        open.setOnClickListener(v -> {
+            dismissSheet();
+            try {
+                Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+                startActivity(intent);
+            } catch (Exception e) {
+                Intent fallback = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+                startActivity(fallback);
+            }
+        });
+        LinearLayout.LayoutParams op = new LinearLayout.LayoutParams(-1, dp(56));
+        op.setMargins(0, dp(16), 0, 0);
+        body.addView(open, op);
+        showBottomSheet("Enable Live Updates", body);
     }
     private void showCurrentTab() {
         if (navIsland != null) navIsland.setVisibility(View.VISIBLE);
@@ -1685,8 +1898,8 @@ public class MainActivity extends Activity {
             list.removeAllViews();
             String q = search.getText().toString().trim().toLowerCase(Locale.US);
             int shown = 0;
-            int limit = Math.min(stops.size(), 160);
-            for (int i = 0; i < limit; i++) {
+            boolean filtering = !q.isEmpty();
+            for (int i = 0; i < stops.size(); i++) {
                 Stop stop = stops.get(i);
                 String label = stop.seq + ". " + stop.name;
                 if (!q.isEmpty() && !label.toLowerCase(Locale.US).contains(q)) continue;
@@ -1700,6 +1913,7 @@ public class MainActivity extends Activity {
                 lp.setMargins(0, 0, 0, dp(8));
                 list.addView(option, lp);
                 shown++;
+                if (!filtering && shown >= 160) break;
             }
             if (shown == 0) list.addView(centerStatus("No matching stops"));
         };
@@ -1710,6 +1924,102 @@ public class MainActivity extends Activity {
         });
         render.run();
         showBottomSheet(title, body);
+        focusSearchField(search);
+    }
+
+    private void showGlobalStopPickerSheet(String title, StopSelectHandler handler) {
+        if (!allStops.isEmpty()) {
+            showPhysicalStopPickerSheet(title, allStops, handler);
+            return;
+        }
+        if (allStopsLoading) {
+            showLoadingSheet("Loading Stops", "Loading bus stops...");
+            return;
+        }
+        allStopsLoading = true;
+        showLoadingSheet("Loading Stops", "Loading bus stops...");
+        io.execute(() -> {
+            try {
+                List<Stop> loaded = dedupeStops(api.allStops());
+                runOnUiThread(() -> {
+                    allStopsLoading = false;
+                    allStops.clear();
+                    allStops.addAll(loaded);
+                    showPhysicalStopPickerSheet(title, allStops, handler);
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    allStopsLoading = false;
+                    showInfoSheet("Stops", "Could not load stops: " + e.getMessage());
+                });
+            }
+        });
+    }
+
+    private void showPhysicalStopPickerSheet(String title, List<Stop> stops, StopSelectHandler handler) {
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        EditText search = new EditText(this);
+        search.setSingleLine(true);
+        search.setHint("Search bus stop");
+        search.setHintTextColor(MUTED);
+        search.setTextColor(TEXT);
+        search.setTextSize(16);
+        search.setPadding(dp(18), 0, dp(18), 0);
+        search.setBackground(round(fieldSurface(), dp(22), tint(BLUE, 0.45f)));
+        body.addView(search, new LinearLayout.LayoutParams(-1, dp(54)));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(list);
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, dp(380));
+        slp.setMargins(0, dp(12), 0, 0);
+        body.addView(scroll, slp);
+
+        Runnable render = () -> {
+            list.removeAllViews();
+            String q = search.getText().toString().trim().toLowerCase(Locale.US);
+            int shown = 0;
+            boolean filtering = !q.isEmpty();
+            for (Stop stop : stops) {
+                String label = stop.name;
+                if (filtering && !label.toLowerCase(Locale.US).contains(q)) continue;
+                Button option = sheetButton(label);
+                option.setOnClickListener(v -> {
+                    dismissSheet();
+                    handler.onSelect(stop);
+                });
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(56));
+                lp.setMargins(0, 0, 0, dp(8));
+                list.addView(option, lp);
+                shown++;
+                if (!filtering && shown >= 120) break;
+            }
+            if (shown == 0) list.addView(centerStatus("No matching stops"));
+        };
+        search.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+            public void onTextChanged(CharSequence s, int st, int b, int c) { render.run(); }
+            public void afterTextChanged(Editable e) {}
+        });
+        render.run();
+        showBottomSheet(title, body);
+        focusSearchField(search);
+    }
+
+    private List<Stop> dedupeStops(List<Stop> stops) {
+        List<Stop> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (Stop stop : stops) {
+            if (stop.lat == 0 && stop.lon == 0) continue;
+            String key = stop.name.toLowerCase(Locale.US) + "@" + Math.round(stop.lat * 10000) + ":" + Math.round(stop.lon * 10000);
+            if (seen.add(key)) out.add(stop);
+        }
+        Collections.sort(out, Comparator.comparing(st -> st.name.toLowerCase(Locale.US)));
+        return out;
     }
 
     private void showRoutePickerSheet(String title, List<Route> choices, RouteOptionHandler handler) {
@@ -1750,7 +2060,8 @@ public class MainActivity extends Activity {
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(56));
                 lp.setMargins(0, 0, 0, dp(8));
                 list.addView(option, lp);
-                if (++shown >= 80) break;
+                shown++;
+                if (q.isEmpty() && shown >= 80) break;
             }
             if (shown == 0) list.addView(centerStatus("No matching routes"));
         };
@@ -1761,6 +2072,7 @@ public class MainActivity extends Activity {
         });
         render.run();
         showBottomSheet(title, body);
+        focusSearchField(search);
     }
 
     private void showTextInputSheet(String title, String initial, String hint, TextHandler handler) {
@@ -1785,6 +2097,11 @@ public class MainActivity extends Activity {
         sp.setMargins(0, dp(14), 0, 0);
         body.addView(save, sp);
         showBottomSheet(title, body);
+        input.requestFocus();
+        input.postDelayed(() -> {
+            InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (imm != null) imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+        }, 220);
     }
 
     private void showBottomSheet(String title, View body) {
@@ -1806,14 +2123,35 @@ public class MainActivity extends Activity {
         }
         sheet.addView(body, bp);
 
+        final int sideMargin = dp(10);
+        final int bottomMargin = dp(10);
         FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
-        sp.setMargins(dp(10), 0, dp(10), dp(10));
+        sp.setMargins(sideMargin, 0, sideMargin, bottomMargin);
         sheetOverlay.addView(sheet, sp);
+        if (Build.VERSION.SDK_INT >= 30) {
+            sheetOverlay.setOnApplyWindowInsetsListener((v, insets) -> {
+                Insets ime = insets.getInsets(WindowInsets.Type.ime());
+                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) sheet.getLayoutParams();
+                lp.setMargins(sideMargin, 0, sideMargin, bottomMargin + ime.bottom);
+                sheet.setLayoutParams(lp);
+                return insets;
+            });
+        }
         root.addView(sheetOverlay, new FrameLayout.LayoutParams(-1, -1));
+        if (Build.VERSION.SDK_INT >= 30) sheetOverlay.requestApplyInsets();
         sheet.setTranslationY(dp(320));
         sheet.animate().translationY(0).setDuration(220).start();
     }
 
+
+    private void focusSearchField(EditText search) {
+        search.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
+        search.requestFocus();
+        search.postDelayed(() -> {
+            InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (imm != null) imm.showSoftInput(search, InputMethodManager.SHOW_IMPLICIT);
+        }, 220);
+    }
 
     private void dismissSheet() {
         if (sheetOverlay != null) {
@@ -1951,6 +2289,30 @@ public class MainActivity extends Activity {
     }
 
 
+    static class RoutePattern {
+        final Route route;
+        final String dir;
+        final List<Stop> stops;
+        RoutePattern(Route route, String dir, List<Stop> stops) {
+            this.route = route; this.dir = dir; this.stops = stops;
+        }
+    }
+
+    static class PatternStop {
+        final int patternIndex, stopIndex;
+        PatternStop(int patternIndex, int stopIndex) {
+            this.patternIndex = patternIndex; this.stopIndex = stopIndex;
+        }
+    }
+
+    static class PathState {
+        final int patternIndex, stopIndex, transfers, stops;
+        final List<CustomRouteLeg> legs;
+        PathState(int patternIndex, int stopIndex, int transfers, int stops, List<CustomRouteLeg> legs) {
+            this.patternIndex = patternIndex; this.stopIndex = stopIndex; this.transfers = transfers; this.stops = stops; this.legs = legs;
+        }
+    }
+
     private static class HttpStatusException extends Exception {
         final int code;
         final String body;
@@ -2069,6 +2431,21 @@ public class MainActivity extends Activity {
 
     static class Api {
         private final Map<String, Stop> stopCache = new HashMap<>();
+
+        List<Stop> allStops() throws Exception {
+            List<Stop> out = new ArrayList<>();
+            JSONArray kmb = new JSONObject(get("https://data.etabus.gov.hk/v1/transport/kmb/stop")).getJSONArray("data");
+            for (int i = 0; i < kmb.length(); i++) {
+                JSONObject o = kmb.getJSONObject(i);
+                out.add(new Stop("KMB:" + o.getString("stop"), best(o, "name_en", "name_tc"), i + 1, Double.parseDouble(o.getString("lat")), Double.parseDouble(o.getString("long"))));
+            }
+            JSONArray ctb = new JSONObject(get("https://rt.data.gov.hk/v2/transport/citybus/stop/CTB")).getJSONArray("data");
+            for (int i = 0; i < ctb.length(); i++) {
+                JSONObject o = ctb.getJSONObject(i);
+                out.add(new Stop("CTB:" + o.getString("stop"), best(o, "name_en", "name_tc"), i + 1, Double.parseDouble(o.getString("lat")), Double.parseDouble(o.getString("long"))));
+            }
+            return out;
+        }
 
         List<Route> routes() throws Exception {
             List<Route> out = new ArrayList<>();

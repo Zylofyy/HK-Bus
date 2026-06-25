@@ -19,6 +19,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.util.Log;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -35,6 +36,7 @@ public class BusTrackingService extends Service {
 
     private static final String CHANNEL_ID = "bus_tracking_live_updates";
     private static final int NOTIFICATION_ID = 4128;
+    private static final String TAG = "BusTrackingService";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -127,9 +129,10 @@ public class BusTrackingService extends Service {
                 .setSubText("Live bus tracking")
                 .setContentIntent(contentIntent)
                 .setColor(accent)
+                .setColorized(false)
+                .setCategory(Notification.CATEGORY_STATUS)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
-                .setLocalOnly(true)
                 .setShowWhen(true)
                 .setWhen(System.currentTimeMillis())
                 .setProgress(100, progress, false)
@@ -140,7 +143,12 @@ public class BusTrackingService extends Service {
         requestPromotedLiveUpdate(builder);
         applyProgressStyle(builder, progress);
         if (Build.VERSION.SDK_INT >= 36) builder.setShortCriticalText(next);
-        return builder.build();
+        Notification notification = builder.build();
+        if (Build.VERSION.SDK_INT >= 36) {
+            boolean requested = notification.extras != null && notification.extras.getBoolean("android.requestPromotedOngoing", false);
+            Log.d(TAG, "Live update requested=" + requested + " promotable=" + notification.hasPromotableCharacteristics());
+        }
+        return notification;
     }
 
 
