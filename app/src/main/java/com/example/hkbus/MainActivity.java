@@ -25,6 +25,7 @@ import android.provider.Settings;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.text.TextUtils;
 import android.view.DragEvent;
 import android.view.Gravity;
 import android.view.View;
@@ -51,6 +52,8 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -69,7 +72,8 @@ import java.util.concurrent.Executors;
 public class MainActivity extends Activity {
     private static final String UPDATE_REPO = "Zylofyy/HK-Bus";
     private static final String LATEST_RELEASE_URL = "https://api.github.com/repos/" + UPDATE_REPO + "/releases/latest";
-    private static final int BG = Color.rgb(5, 7, 13);
+    private static final int PICK_BACKGROUND_IMAGE = 8042;
+private static final int BG = Color.rgb(5, 7, 13);
     private static final int PANEL = Color.argb(165, 24, 28, 38);
     private static final int CARD = Color.rgb(17, 21, 31);
     private static final int STROKE = Color.rgb(47, 57, 74);
@@ -87,7 +91,8 @@ public class MainActivity extends Activity {
     private FrameLayout sheetOverlay;
     private ImageButton groupFab;
     private ImageButton topMenu;
-    private int tab = 0;
+    private ImageView backgroundImage;
+private int tab = 0;
     private SharedPreferences prefs;
     private final List<Route> routes = new ArrayList<>();
     private final Map<String, LinearLayout> previewEtaViews = new HashMap<>();
@@ -137,16 +142,33 @@ public class MainActivity extends Activity {
         super.onPause();
     }
 
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == PICK_BACKGROUND_IMAGE && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            Uri uri = data.getData();
+            try {
+                getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (Exception ignored) {}
+            prefs.edit().putString("customBackgroundUri", uri.toString()).apply();
+            updateCustomBackground();
+            showCurrentTab();
+        }
+    }
+
     private void buildShell() {
         root = new FrameLayout(this);
+        backgroundImage = new ImageView(this);
+        backgroundImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        root.addView(backgroundImage, new FrameLayout.LayoutParams(-1, -1));
         content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(18), dp(34), dp(18), dp(112));
         root.addView(content, new FrameLayout.LayoutParams(-1, -1));
 
-        topMenu = themedImageButton(R.drawable.ic_more_vertical, floatingSurface(), buttonText(), Color.TRANSPARENT, dp(22));
+        topMenu = themedImageButton(R.drawable.ic_more_vertical, floatingSurface(), buttonText(), Color.TRANSPARENT, dp(18));
         topMenu.setOnClickListener(v -> showMainMenuSheet());
-        FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(dp(56), dp(56), Gravity.TOP | Gravity.RIGHT);
+        FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP | Gravity.RIGHT);
         mp.setMargins(0, dp(28), dp(18), 0);
         root.addView(topMenu, mp);
 
@@ -156,11 +178,12 @@ public class MainActivity extends Activity {
         nav.setPadding(dp(16), dp(8), dp(16), dp(8));
         navIsland.addView(nav, new FrameLayout.LayoutParams(-1, -1));
         FrameLayout.LayoutParams np = new FrameLayout.LayoutParams(-1, dp(104), Gravity.BOTTOM);
+        np.setMargins(0, 0, 0, dp(12));
         root.addView(navIsland, np);
 
         groupFab = themedImageButton(R.drawable.ic_plus_round, floatingSurface(), buttonText(), Color.TRANSPARENT, dp(22));
         groupFab.setOnClickListener(v -> {
-            if (tab == 1) showRouteFabMenu();
+            if (tab == 1) showNewRouteNameSheet();
             else showCreateGroupDialog(null);
         });
         FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(dp(72), dp(72), Gravity.BOTTOM | Gravity.RIGHT);
@@ -1425,10 +1448,11 @@ public class MainActivity extends Activity {
 
     private void applyThemeSurfaces() {
         if (root != null) root.setBackgroundColor(appBackground());
+        updateCustomBackground();
         if (navIsland != null) navIsland.setBackground(round(navSurface(), dp(0), Color.TRANSPARENT));
         if (topMenu != null) {
             topMenu.setColorFilter(buttonText());
-            topMenu.setBackground(round(floatingSurface(), dp(22), Color.TRANSPARENT));
+            topMenu.setBackground(round(floatingSurface(), dp(18), Color.TRANSPARENT));
         }
         if (groupFab != null) {
             groupFab.setColorFilter(buttonText());
@@ -1475,17 +1499,9 @@ public class MainActivity extends Activity {
     private void setFabForScroll(boolean visible) {
         if (groupFab == null || groupFab.getVisibility() == View.GONE || !groupFab.isEnabled()) return;
         groupFab.animate().cancel();
-        groupFab.animate()
-                .alpha(visible ? 1f : 0f)
-                .translationY(visible ? 0 : dp(22))
-                .setDuration(140)
-                .withStartAction(() -> {
-                    if (visible) groupFab.setVisibility(View.VISIBLE);
-                })
-                .withEndAction(() -> {
-                    if (!visible) groupFab.setVisibility(View.INVISIBLE);
-                })
-                .start();
+        groupFab.setAlpha(visible ? 1f : 0f);
+        groupFab.setTranslationY(visible ? 0 : dp(22));
+        groupFab.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
     }
     private ImageButton themedImageButton(int iconRes, int fill, int iconColor, int stroke, int radius) {
         ImageButton b = new ImageButton(this);
@@ -1613,11 +1629,55 @@ public class MainActivity extends Activity {
     }
 
     private void showMainMenuSheet() {
-        showOptionSheet("Menu", new String[]{"Theme", "Languages", "About"}, (index, label) -> {
-            if (index == 0) showThemeSheet();
-            else if (index == 2) showAboutSheet();
+        List<String> items = new ArrayList<>();
+        items.add("Theme");
+        items.add("Use Background Image");
+        if (hasCustomBackground()) items.add("Remove Background");
+        items.add("Languages");
+        items.add("About");
+        showOptionSheet("Menu", items.toArray(new String[0]), (index, label) -> {
+            if ("Theme".equals(label)) showThemeSheet();
+            else if ("Use Background Image".equals(label)) pickCustomBackground();
+            else if ("Remove Background".equals(label)) removeCustomBackground();
+            else if ("About".equals(label)) showAboutSheet();
             else showInfoSheet(label, label + " will be available later.");
         });
+    }
+
+    private boolean hasCustomBackground() {
+        return prefs != null && prefs.getString("customBackgroundUri", "").length() > 0;
+    }
+
+    private void pickCustomBackground() {
+        dismissSheet();
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(intent, PICK_BACKGROUND_IMAGE);
+    }
+
+    private void removeCustomBackground() {
+        prefs.edit().remove("customBackgroundUri").apply();
+        updateCustomBackground();
+        showCurrentTab();
+    }
+
+    private void updateCustomBackground() {
+        if (backgroundImage == null || prefs == null) return;
+        String uri = prefs.getString("customBackgroundUri", "");
+        if (uri.length() == 0) {
+            backgroundImage.setImageDrawable(null);
+            backgroundImage.setVisibility(View.GONE);
+            return;
+        }
+        try {
+            backgroundImage.setImageURI(Uri.parse(uri));
+            backgroundImage.setVisibility(View.VISIBLE);
+            backgroundImage.setAlpha(0.42f);
+        } catch (Exception e) {
+            backgroundImage.setVisibility(View.GONE);
+        }
     }
 
     private void showThemeSheet() {
@@ -1638,7 +1698,7 @@ public class MainActivity extends Activity {
         TextView version = text("Current version: " + currentVersionName(), 16, TEXT, true);
         body.addView(version);
         TextView status = text("", 14, MUTED, false);
-        Button check = sheetButton("Check for new release");
+        Button check = sheetButton("Check for updates");
         check.setOnClickListener(v -> checkForRelease(status, check));
         body.addView(check, new LinearLayout.LayoutParams(-1, dp(56)));
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
@@ -1666,7 +1726,7 @@ public class MainActivity extends Activity {
 
     private void checkForRelease(TextView status, Button check) {
         check.setEnabled(false);
-        status.setText("Checking GitHub releases...");
+        status.setText("Checking for updates...");
         io.execute(() -> {
             try {
                 JSONObject release = new JSONObject(httpGet(LATEST_RELEASE_URL));
@@ -2115,7 +2175,10 @@ public class MainActivity extends Activity {
         sheet.setPadding(dp(22), dp(18), dp(22), dp(22));
         sheet.setBackground(round(sheetSurface(), dp(30), tint(BLUE, 0.38f)));
         sheet.setOnClickListener(v -> {});
-        sheet.addView(text(title, 24, TEXT, true));
+        TextView sheetTitle = text(title, 24, TEXT, true);
+        sheetTitle.setSingleLine(true);
+        sheetTitle.setEllipsize(TextUtils.TruncateAt.END);
+        sheet.addView(sheetTitle);
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, -2);
         bp.setMargins(0, dp(16), 0, 0);
         if (body instanceof ScrollView) {
@@ -2285,6 +2348,7 @@ public class MainActivity extends Activity {
     private static String opName(String op) {
         if ("KMB".equals(op)) return "KMB";
         if ("MTR".equals(op)) return "MTR";
+        if ("NLB".equals(op)) return "NLB";
         return "Citybus";
     }
 
@@ -2434,16 +2498,17 @@ public class MainActivity extends Activity {
 
         List<Stop> allStops() throws Exception {
             List<Stop> out = new ArrayList<>();
-            JSONArray kmb = new JSONObject(get("https://data.etabus.gov.hk/v1/transport/kmb/stop")).getJSONArray("data");
+            JSONArray kmb = arrayFromData(new JSONObject(get("https://data.etabus.gov.hk/v1/transport/kmb/stop")), "data");
             for (int i = 0; i < kmb.length(); i++) {
                 JSONObject o = kmb.getJSONObject(i);
                 out.add(new Stop("KMB:" + o.getString("stop"), best(o, "name_en", "name_tc"), i + 1, Double.parseDouble(o.getString("lat")), Double.parseDouble(o.getString("long"))));
             }
-            JSONArray ctb = new JSONObject(get("https://rt.data.gov.hk/v2/transport/citybus/stop/CTB")).getJSONArray("data");
+            JSONArray ctb = arrayFromData(new JSONObject(get("https://rt.data.gov.hk/v2/transport/citybus/stop/CTB")), "data");
             for (int i = 0; i < ctb.length(); i++) {
                 JSONObject o = ctb.getJSONObject(i);
                 out.add(new Stop("CTB:" + o.getString("stop"), best(o, "name_en", "name_tc"), i + 1, Double.parseDouble(o.getString("lat")), Double.parseDouble(o.getString("long"))));
             }
+            for (MtrBusStops.Info info : MtrBusStops.all()) out.add(new Stop(info.id, info.name, 0, info.lat, info.lon));
             return out;
         }
 
@@ -2458,6 +2523,13 @@ public class MainActivity extends Activity {
             for (int i = 0; i < ctb.length(); i++) {
                 JSONObject o = ctb.getJSONObject(i);
                 out.add(new Route("CTB", o.getString("route"), best(o, "orig_en", "orig_tc"), best(o, "dest_en", "dest_tc"), "1"));
+            }
+            JSONArray nlb = new JSONObject(get("https://rt.data.gov.hk/v2/transport/nlb/route.php?action=list")).getJSONArray("routes");
+            for (int i = 0; i < nlb.length(); i++) {
+                JSONObject o = nlb.getJSONObject(i);
+                String name = o.optString("routeName_e", "");
+                String[] ends = splitEnds(name);
+                out.add(new Route("NLB", o.getString("routeNo"), ends[0], ends[1], o.getString("routeId")));
             }
             addMtrRoutes(out);
             return out;
@@ -2498,6 +2570,7 @@ public class MainActivity extends Activity {
         List<Stop> routeStops(Bookmark b) throws Exception {
             List<Stop> out = new ArrayList<>();
             if ("MTR".equals(b.operator)) return mtrRouteStops(b);
+            if ("NLB".equals(b.operator)) return nlbRouteStops(b);
             JSONArray arr;
             if ("KMB".equals(b.operator)) {
                 String url = "https://data.etabus.gov.hk/v1/transport/kmb/route-stop/" + enc(b.route) + "/" + b.dir + "/" + enc(b.serviceType);
@@ -2520,6 +2593,16 @@ public class MainActivity extends Activity {
             return out;
         }
 
+        private List<Stop> nlbRouteStops(Bookmark b) throws Exception {
+            JSONArray arr = new JSONObject(get("https://rt.data.gov.hk/v2/transport/nlb/stop.php?action=list&routeId=" + enc(b.serviceType))).getJSONArray("stops");
+            List<Stop> out = new ArrayList<>();
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.getJSONObject(i);
+                out.add(new Stop(o.getString("stopId"), best(o, "stopName_e", "stopName_c"), i + 1, Double.parseDouble(o.getString("latitude")), Double.parseDouble(o.getString("longitude"))));
+            }
+            return out;
+        }
+
         private List<Stop> mtrRouteStops(Bookmark b) throws Exception {
             JSONObject schedule = mtrSchedule(b.route);
             JSONArray arr = schedule.getJSONArray("busStop");
@@ -2527,7 +2610,11 @@ public class MainActivity extends Activity {
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject stop = arr.getJSONObject(i);
                 String id = stop.optString("busStopId", b.route + ":" + (i + 1));
-                out.add(new Stop(id, id, i + 1, 0, 0));
+                MtrBusStops.Info info = MtrBusStops.get(id);
+                String name = info == null ? id : info.name;
+                double lat = info == null ? 0 : info.lat;
+                double lon = info == null ? 0 : info.lon;
+                out.add(new Stop(id, name, i + 1, lat, lon));
             }
             return out;
         }
@@ -2563,6 +2650,7 @@ public class MainActivity extends Activity {
 
         List<String> etas(Bookmark b, Stop s) throws Exception {
             if ("MTR".equals(b.operator)) return mtrEtas(b, s);
+            if ("NLB".equals(b.operator)) return nlbEtas(b, s);
             JSONArray arr;
             if ("KMB".equals(b.operator)) {
                 String url = "https://data.etabus.gov.hk/v1/transport/kmb/eta/" + enc(s.id) + "/" + enc(b.route) + "/" + enc(b.serviceType);
@@ -2583,6 +2671,18 @@ public class MainActivity extends Activity {
             return times;
         }
 
+        private List<String> nlbEtas(Bookmark b, Stop s) throws Exception {
+            JSONObject root = new JSONObject(get("https://rt.data.gov.hk/v2/transport/nlb/stop.php?action=estimatedArrivals&routeId=" + enc(b.serviceType) + "&stopId=" + enc(s.id) + "&language=en"));
+            JSONArray arr = root.optJSONArray("estimatedArrivals");
+            List<String> times = new ArrayList<>();
+            if (arr == null) return times;
+            for (int i = 0; i < arr.length() && times.size() < 3; i++) {
+                String eta = arr.getJSONObject(i).optString("estimatedArrivalTime", "");
+                if (eta.length() > 0) times.add(relative(eta));
+            }
+            return times;
+        }
+
         private Stop stop(String operator, String id) throws Exception {
             String key = operator + ":" + id;
             if (stopCache.containsKey(key)) return stopCache.get(key);
@@ -2599,6 +2699,13 @@ public class MainActivity extends Activity {
 
         private static String relative(String iso) {
             try {
+                if (iso != null && iso.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")) {
+                    LocalDateTime t = LocalDateTime.parse(iso, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+                    long mins = Duration.between(LocalDateTime.now(ZoneId.of("Asia/Hong_Kong")), t).toMinutes();
+                    if (mins <= 0) return "Due";
+                    if (mins < 60) return mins + " min";
+                    return t.toLocalTime().toString().substring(0, 5);
+                }
                 OffsetDateTime t = OffsetDateTime.parse(iso, DateTimeFormatter.ISO_OFFSET_DATE_TIME);
                 long mins = Duration.between(OffsetDateTime.now(t.getOffset()), t).toMinutes();
                 if (mins <= 0) return "Due";
@@ -2607,6 +2714,27 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 return iso.replace("T", " ").replace("+08:00", "");
             }
+        }
+
+        private static JSONArray arrayFromData(JSONObject root, String key) throws Exception {
+            Object data = root.get(key);
+            if (data instanceof JSONArray) return (JSONArray) data;
+            JSONArray arr = new JSONArray();
+            if (data instanceof JSONObject) {
+                JSONObject obj = (JSONObject) data;
+                java.util.Iterator<String> keys = obj.keys();
+                while (keys.hasNext()) {
+                    Object value = obj.get(keys.next());
+                    if (value instanceof JSONObject) arr.put(value);
+                }
+            }
+            return arr;
+        }
+
+        private static String[] splitEnds(String name) {
+            String[] ends = name.split(" > | to | - ", 2);
+            if (ends.length == 2) return new String[]{ends[0].trim(), ends[1].trim()};
+            return new String[]{name, ""};
         }
 
         private static String best(JSONObject o, String en, String tc) {

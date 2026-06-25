@@ -42,6 +42,10 @@ public class BusTrackingService extends Service {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final MainActivity.Api api = new MainActivity.Api();
     private MainActivity.Bookmark bookmark;
+    private MainActivity.Stop trackedStop;
+    private long etaWindowStartMs;
+    private long etaWindowDurationMs;
+    private boolean etaWindowComplete;
     private Runnable pollRunnable;
 
     @Override
@@ -63,6 +67,10 @@ public class BusTrackingService extends Service {
             return START_NOT_STICKY;
         }
         bookmark = parsed;
+        trackedStop = null;
+        etaWindowStartMs = 0;
+        etaWindowDurationMs = 0;
+        etaWindowComplete = false;
         getSharedPreferences("hkbus", MODE_PRIVATE).edit().putString(PREF_TRACKING_KEY, bookmark.storageKey()).apply();
         startForeground(NOTIFICATION_ID, buildNotification("Finding nearest stop", "Live bus tracking", 0));
         schedulePoll(0);
@@ -90,14 +98,19 @@ public class BusTrackingService extends Service {
         if (active == null) return;
         io.execute(() -> {
             try {
-                List<MainActivity.Stop> stops = api.routeStops(active);
-                MainActivity.Stop nearest = nearest(stops);
-                List<String> times = api.etas(active, nearest);
+                MainActivity.Stop stop = trackedStop;
+                if (stop == null) {
+                    List<MainActivity.Stop> stops = api.routeStops(active);
+                    stop = nearest(stops);
+                    trackedStop = stop;
+                }
+                MainActivity.Stop selectedStop = stop;
+                List<String> times = api.etas(active, selectedStop);
                 String next = times.isEmpty() ? "No upcoming arrivals" : times.get(0);
                 int progress = progressFromEta(next);
                 handler.post(() -> {
                     if (bookmark == null || !bookmark.storageKey().equals(active.storageKey())) return;
-                    Notification notification = buildNotification(next, nearest.name, progress);
+                    Notification notification = buildNotification(next, selectedStop.name, progress);
                     ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(NOTIFICATION_ID, notification);
                     schedulePoll("Due".equals(next) ? 12000 : 30000);
                 });
@@ -196,12 +209,24 @@ public class BusTrackingService extends Service {
 
     private int progressFromEta(String eta) {
         if (eta == null || eta.length() == 0) return 0;
-        if ("Due".equalsIgnoreCase(eta)) return 100;
+        if ("Due".equalsIgnoreCase(eta)) {
+            etaWindowComplete = true;
+            return 100;
+        }
         String lower = eta.toLowerCase(Locale.US);
         if (lower.endsWith(" min")) {
             try {
                 int minutes = Integer.parseInt(lower.replace(" min", "").trim());
-                return Math.max(0, Math.min(100, 100 - Math.round(minutes * 100f / 20f)));
+                long etaMs = Math.max(1, minutes) * 60000L;
+                long now = System.currentTimeMillis();
+                if (etaWindowDurationMs == 0 || etaWindowComplete) {
+                    etaWindowStartMs = now;
+                    etaWindowDurationMs = etaMs;
+                    etaWindowComplete = false;
+                    return 0;
+                }
+                long elapsed = Math.max(0, now - etaWindowStartMs);
+                return Math.max(0, Math.min(100, Math.round(elapsed * 100f / etaWindowDurationMs)));
             } catch (Exception ignored) {}
         }
         return 0;
@@ -209,6 +234,7 @@ public class BusTrackingService extends Service {
 
     private void stopTracking() {
         bookmark = null;
+        trackedStop = null;
         handler.removeCallbacksAndMessages(null);
         getSharedPreferences("hkbus", MODE_PRIVATE).edit().remove(PREF_TRACKING_KEY).apply();
         ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).cancel(NOTIFICATION_ID);
@@ -232,5 +258,5 @@ public class BusTrackingService extends Service {
         return prefs.getInt("themeColor", Color.rgb(10, 132, 255));
     }
 
-    private static String opName(String op) { if ("KMB".equals(op)) return "KMB"; if ("MTR".equals(op)) return "MTR"; return "Citybus"; }
+    private static String opName(String op) { if ("KMB".equals(op)) return "KMB"; if ("MTR".equals(op)) return "MTR"; if ("NLB".equals(op)) return "NLB"; return "Citybus"; }
 }
