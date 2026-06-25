@@ -32,7 +32,7 @@ public class BusTrackingService extends Service {
     public static final String EXTRA_BOOKMARK = "bookmark";
     public static final String PREF_TRACKING_KEY = "trackingKey";
 
-    private static final String CHANNEL_ID = "bus_tracking";
+    private static final String CHANNEL_ID = "bus_tracking_live_updates";
     private static final int NOTIFICATION_ID = 4128;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -159,15 +159,37 @@ public class BusTrackingService extends Service {
         try {
             Class<?> styleClass = Class.forName("android.app.Notification$ProgressStyle");
             Object style = styleClass.getConstructor().newInstance();
-            styleClass.getMethod("setProgress", int.class).invoke(style, progress);
-            styleClass.getMethod("setStyledByProgress", boolean.class).invoke(style, true);
+            int clamped = Math.max(0, Math.min(100, progress));
+            styleClass.getMethod("setProgress", int.class).invoke(style, clamped);
+            styleClass.getMethod("setStyledByProgress", boolean.class).invoke(style, false);
 
             Class<?> segmentClass = Class.forName("android.app.Notification$ProgressStyle$Segment");
-            Object segment = segmentClass.getConstructor(int.class).newInstance(100);
-            segmentClass.getMethod("setColor", int.class).invoke(segment, accent);
             List<Object> segments = new ArrayList<>();
-            segments.add(segment);
+            if (clamped > 0) {
+                Object elapsed = segmentClass.getConstructor(int.class).newInstance(clamped);
+                segmentClass.getMethod("setColor", int.class).invoke(elapsed, accent);
+                segments.add(elapsed);
+            }
+            if (clamped < 100) {
+                Object remaining = segmentClass.getConstructor(int.class).newInstance(100 - clamped);
+                segmentClass.getMethod("setColor", int.class).invoke(remaining, Color.argb(90, Color.red(accent), Color.green(accent), Color.blue(accent)));
+                segments.add(remaining);
+            }
+            if (segments.isEmpty()) {
+                Object complete = segmentClass.getConstructor(int.class).newInstance(100);
+                segmentClass.getMethod("setColor", int.class).invoke(complete, accent);
+                segments.add(complete);
+            }
             styleClass.getMethod("setProgressSegments", List.class).invoke(style, segments);
+
+            Class<?> pointClass = Class.forName("android.app.Notification$ProgressStyle$Point");
+            List<Object> points = new ArrayList<>();
+            for (int point : new int[]{25, 50, 75}) {
+                Object marker = pointClass.getConstructor(int.class).newInstance(point);
+                pointClass.getMethod("setColor", int.class).invoke(marker, Color.argb(210, 48, 209, 88));
+                points.add(marker);
+            }
+            styleClass.getMethod("setProgressPoints", List.class).invoke(style, points);
             builder.setStyle((Notification.Style) style);
         } catch (Throwable ignored) {
             builder.setProgress(100, progress, false);
@@ -227,7 +249,7 @@ public class BusTrackingService extends Service {
     }
 
     private void createChannel() {
-        NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Bus tracking", NotificationManager.IMPORTANCE_LOW);
+        NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Bus tracking", NotificationManager.IMPORTANCE_DEFAULT);
         channel.setDescription("Live Hong Kong bus arrival tracking");
         channel.setShowBadge(false);
         ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(channel);

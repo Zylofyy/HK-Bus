@@ -88,6 +88,7 @@ public class MainActivity extends Activity {
     private final Map<String, LinearLayout> previewEtaViews = new HashMap<>();
     private final Map<String, TextView> previewStopViews = new HashMap<>();
     private final Map<String, Button> trackingButtons = new HashMap<>();
+    private final Set<String> expandedCustomRoutes = new HashSet<>();
     private boolean trackingReceiverRegistered = false;
     private final BroadcastReceiver trackingStoppedReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) { updateTrackingButtons(); }
@@ -150,7 +151,7 @@ public class MainActivity extends Activity {
 
         groupFab = themedImageButton(R.drawable.ic_plus_round, floatingSurface(), buttonText(), Color.TRANSPARENT, dp(22));
         groupFab.setOnClickListener(v -> {
-            if (tab == 1) showCreateRouteFlow(null);
+            if (tab == 1) showRouteFabMenu();
             else showCreateGroupDialog(null);
         });
         FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(dp(72), dp(72), Gravity.BOTTOM | Gravity.RIGHT);
@@ -205,7 +206,7 @@ public class MainActivity extends Activity {
         updateGroupFab();
         content.removeAllViews();
         content.addView(pageTitle("Routes"));
-        content.addView(text("Create multi-stop route cards from saved bus routes.", 15, MUTED, false));
+        content.addView(text("Build named journeys from one or more saved bus legs.", 15, MUTED, false));
 
         ScrollView scroll = new ScrollView(this);
         applyCardScrollFade(scroll);
@@ -224,31 +225,49 @@ public class MainActivity extends Activity {
         for (CustomRoute route : customRoutes) list.addView(customRouteCard(route));
     }
 
+    private void showRouteFabMenu() {
+        showOptionSheet("Routes", new String[]{"Create Route"}, (index, label) -> showNewRouteNameSheet());
+    }
+
+    private void showNewRouteNameSheet() {
+        showTextInputSheet("New Route", "", "Route name", value -> {
+            String name = value == null ? "" : value.trim();
+            if (name.length() == 0) return;
+            CustomRoute customRoute = new CustomRoute(String.valueOf(System.currentTimeMillis()), name, new ArrayList<>());
+            saveCustomRoute(customRoute);
+            showCustomRouteEditor(customRoute);
+        });
+    }
+
     private View customRouteCard(CustomRoute customRoute) {
-        Bookmark b = customRoute.bookmark();
         LinearLayout box = card();
-        LinearLayout header = new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = text(customRoute.name, 22, TEXT, true);
-        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        header.addView(groupPill(opName(b.operator)));
-        box.addView(header);
-        TextView direction = text(customRoute.startName + "  ->  " + customRoute.endName, 15, TEXT, false);
-        direction.setPadding(dp(14), dp(10), dp(14), dp(10));
-        direction.setBackground(round(fieldSurface(), dp(14), outline()));
-        LinearLayout.LayoutParams dpv = new LinearLayout.LayoutParams(-1, -2);
-        dpv.setMargins(0, dp(12), 0, dp(10));
-        box.addView(direction, dpv);
-        LinearLayout etaRow = etaBoxRow(null);
-        box.addView(etaRow);
-        loadEtaRowInto(b, new Stop(customRoute.startStopId, customRoute.startName, customRoute.startSeq, 0, 0), etaRow);
+        box.addView(title);
+
+        if (customRoute.legs.isEmpty()) {
+            TextView empty = text("No bus routes added yet", 15, MUTED, false);
+            LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-1, -2);
+            ep.setMargins(0, dp(10), 0, 0);
+            box.addView(empty, ep);
+        } else {
+            CustomRouteLeg nearest = nearestLeg(customRoute);
+            box.addView(collapsedRouteSummary(nearest));
+            if (expandedCustomRoutes.contains(customRoute.id)) {
+                for (CustomRouteLeg leg : customRoute.legs) box.addView(customRouteLegCard(leg, false));
+            }
+        }
+
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.CENTER_VERTICAL);
         actions.setPadding(0, dp(12), 0, 0);
-        Button expand = materialButton("Expand");
-        expand.setOnClickListener(v -> showCustomRouteDetail(customRoute));
+        Button expand = materialButton(expandedCustomRoutes.contains(customRoute.id) ? "Collapse" : "Expand");
+        expand.setOnClickListener(v -> {
+            if (expandedCustomRoutes.contains(customRoute.id)) expandedCustomRoutes.remove(customRoute.id);
+            else expandedCustomRoutes.add(customRoute.id);
+            showRoutes();
+        });
         Button edit = materialButton("Edit");
-        edit.setOnClickListener(v -> showCreateRouteFlow(customRoute));
+        edit.setOnClickListener(v -> showCustomRouteEditor(customRoute));
         actions.addView(expand, new LinearLayout.LayoutParams(0, dp(44), 1));
         TextView gap = new TextView(this);
         actions.addView(gap, new LinearLayout.LayoutParams(dp(10), 1));
@@ -257,88 +276,153 @@ public class MainActivity extends Activity {
         return box;
     }
 
-    private void showCustomRouteDetail(CustomRoute customRoute) {
-        Bookmark b = customRoute.bookmark();
+    private View collapsedRouteSummary(CustomRouteLeg leg) {
+        LinearLayout wrap = new LinearLayout(this);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        wrap.setPadding(dp(14), dp(12), dp(14), dp(12));
+        wrap.setBackground(round(fieldSurface(), dp(18), outline()));
+        LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-1, -2);
+        wp.setMargins(0, dp(12), 0, 0);
+        wrap.setLayoutParams(wp);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView route = text(leg.route, 20, TEXT, true);
+        row.addView(route, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView eta = text("Loading", 15, GREEN, true);
+        eta.setGravity(Gravity.CENTER);
+        eta.setSingleLine(true);
+        eta.setPadding(dp(14), dp(8), dp(14), dp(8));
+        eta.setBackground(round(surface(), dp(15), outline()));
+        row.addView(eta, new LinearLayout.LayoutParams(-2, dp(38)));
+        wrap.addView(row);
+
+        TextView stop = text(leg.startName, 14, MUTED, false);
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
+        sp.setMargins(0, dp(6), 0, 0);
+        wrap.addView(stop, sp);
+        loadFirstEtaInto(leg, eta);
+        return wrap;
+    }
+
+    private View customRouteLegCard(CustomRouteLeg leg, boolean editPage) {
+        LinearLayout box = card();
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        String title = editPage ? leg.route + "  " + opName(leg.operator) : leg.route;
+        header.addView(text(title, 22, TEXT, true), new LinearLayout.LayoutParams(0, -2, 1));
+        if (!editPage) header.addView(groupPill(opName(leg.operator)));
+        box.addView(header);
+
+        TextView start = text(leg.startName, 15, TEXT, true);
+        start.setPadding(dp(14), dp(10), dp(14), dp(10));
+        start.setBackground(round(fieldSurface(), dp(14), outline()));
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
+        sp.setMargins(0, dp(12), 0, dp(10));
+        box.addView(start, sp);
+
+        LinearLayout etaRow = etaBoxRow(null);
+        box.addView(etaRow);
+        loadEtaRowInto(leg.bookmark(), leg.startStop(), etaRow);
+
+        TextView connector = text("|", 20, MUTED, false);
+        connector.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2);
+        cp.setMargins(0, dp(6), 0, dp(2));
+        box.addView(connector, cp);
+
+        TextView end = text(leg.endName, 14, MUTED, false);
+        end.setGravity(Gravity.CENTER);
+        box.addView(end);
+        return box;
+    }
+
+    private void showCustomRouteEditor(CustomRoute customRoute) {
         navIsland.setVisibility(View.GONE);
-        if (topMenu != null) topMenu.setVisibility(View.GONE);
         if (groupFab != null) groupFab.setVisibility(View.GONE);
+        if (topMenu != null) topMenu.setVisibility(View.VISIBLE);
         content.removeAllViews();
+
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         Button back = materialButton("Back");
-        back.setOnClickListener(v -> { navIsland.setVisibility(View.VISIBLE); if (topMenu != null) topMenu.setVisibility(View.VISIBLE); showRoutes(); });
+        back.setOnClickListener(v -> {
+            navIsland.setVisibility(View.VISIBLE);
+            showRoutes();
+        });
         header.addView(back, new LinearLayout.LayoutParams(dp(86), dp(42)));
         TextView title = text("  " + customRoute.name, 24, TEXT, true);
         header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
         content.addView(header);
+
         ScrollView scroll = new ScrollView(this);
-        LinearLayout stops = new LinearLayout(this);
-        stops.setOrientation(LinearLayout.VERTICAL);
-        scroll.addView(stops);
+        applyCardScrollFade(scroll);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(list);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, 0, 1);
         lp.setMargins(0, dp(18), 0, 0);
         content.addView(scroll, lp);
-        stops.addView(centerStatus("Loading route..."));
-        io.execute(() -> {
-            try {
-                List<Stop> all = api.routeStops(b);
-                List<Stop> selected = sliceStops(all, customRoute.startStopId, customRoute.endStopId);
-                runOnUiThread(() -> {
-                    stops.removeAllViews();
-                    for (Stop s : selected) {
-                        LinearLayout box = card();
-                        box.addView(text(s.seq + ". " + s.name, 18, TEXT, true));
-                        LinearLayout row = etaBoxRow(null);
-                        LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-1, -2);
-                        ep.setMargins(0, dp(10), 0, 0);
-                        box.addView(row, ep);
-                        stops.addView(box);
-                        loadEtaRowInto(b, s, row);
-                    }
-                });
-            } catch (Exception e) {
-                runOnUiThread(() -> { stops.removeAllViews(); stops.addView(centerStatus("Could not load route: " + e.getMessage())); });
-            }
-        });
+
+        if (customRoute.legs.isEmpty()) {
+            TextView intro = centerStatus("Add the first bus route for this route.");
+            list.addView(intro);
+        } else {
+            for (CustomRouteLeg leg : customRoute.legs) list.addView(customRouteLegCard(leg, true));
+        }
+        list.addView(addRouteLegButton(customRoute));
     }
 
+    private View addRouteLegButton(CustomRoute customRoute) {
+        Button add = materialButton(customRoute.legs.isEmpty() ? "Add First Bus Route" : "Add Another Bus Route");
+        add.setOnClickListener(v -> beginAddRouteLeg(customRoute));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(58));
+        lp.setMargins(0, dp(16), 0, dp(18));
+        add.setLayoutParams(lp);
+        return add;
+    }
 
     private void showCreateRouteFlow(CustomRoute editing) {
+        if (editing == null) showNewRouteNameSheet();
+        else showCustomRouteEditor(editing);
+    }
+
+    private void beginAddRouteLeg(CustomRoute customRoute) {
         if (routes.isEmpty()) { showInfoSheet("Routes", "Routes are still loading."); return; }
         List<Route> choices = new ArrayList<>(routes);
         Collections.sort(choices, Comparator.comparing((Route r) -> r.route.length()).thenComparing(r -> r.route));
-        int limit = Math.min(choices.size(), 90);
+        int limit = Math.min(choices.size(), 120);
         String[] labels = new String[limit];
         for (int i = 0; i < limit; i++) labels[i] = choices.get(i).route + " " + opName(choices.get(i).operator) + "  " + choices.get(i).orig + " -> " + choices.get(i).dest;
-        showOptionSheet("Select Bus Route", labels, (index, label) -> chooseRouteStops(choices.get(index), editing));
+        showOptionSheet("Select Bus Route", labels, (index, label) -> chooseRouteStops(choices.get(index), customRoute));
     }
 
-    private void chooseRouteStops(Route route, CustomRoute editing) {
+    private void chooseRouteStops(Route route, CustomRoute customRoute) {
         Bookmark b = new Bookmark(route.operator, route.route, "outbound", route.serviceType, route.orig, route.dest, "Ungrouped");
         io.execute(() -> {
             try {
                 List<Stop> stops = api.routeStops(b);
-                runOnUiThread(() -> chooseStartStop(route, stops, editing));
+                runOnUiThread(() -> chooseStartStop(route, stops, customRoute));
             } catch (Exception e) {
                 runOnUiThread(() -> showInfoSheet("Route", "Could not load stops: " + e.getMessage()));
             }
         });
     }
 
-    private void chooseStartStop(Route route, List<Stop> stops, CustomRoute editing) {
+    private void chooseStartStop(Route route, List<Stop> stops, CustomRoute customRoute) {
         String[] names = stopOptionLabels(stops);
-        showOptionSheet("Starting Stop", names, (startIndex, label) -> chooseEndStop(route, stops, startIndex, editing));
+        showOptionSheet("Starting Stop", names, (startIndex, label) -> chooseEndStop(route, stops, startIndex, customRoute));
     }
 
-    private void chooseEndStop(Route route, List<Stop> stops, int startIndex, CustomRoute editing) {
+    private void chooseEndStop(Route route, List<Stop> stops, int startIndex, CustomRoute customRoute) {
         String[] names = stopOptionLabels(stops);
         showOptionSheet("Ending Stop", names, (endIndex, label) -> {
             Stop start = stops.get(startIndex);
             Stop end = stops.get(endIndex);
-            String name = route.route + " " + opName(route.operator);
-            CustomRoute custom = new CustomRoute(editing == null ? String.valueOf(System.currentTimeMillis()) : editing.id, name, route.operator, route.route, "outbound", route.serviceType, start.id, start.name, start.seq, end.id, end.name, end.seq);
-            saveCustomRoute(custom);
-            showRoutes();
+            CustomRouteLeg leg = new CustomRouteLeg(route.operator, route.route, "outbound", route.serviceType, route.orig, route.dest, start.id, start.name, start.seq, start.lat, start.lon, end.id, end.name, end.seq, end.lat, end.lon);
+            customRoute.legs.add(leg);
+            saveCustomRoute(customRoute);
+            showCustomRouteEditor(customRoute);
         });
     }
 
@@ -348,15 +432,40 @@ public class MainActivity extends Activity {
         return names;
     }
 
-    private List<Stop> sliceStops(List<Stop> stops, String startId, String endId) {
-        int start = 0;
-        int end = stops.size() - 1;
-        for (int i = 0; i < stops.size(); i++) {
-            if (stops.get(i).id.equals(startId)) start = i;
-            if (stops.get(i).id.equals(endId)) end = i;
+    private CustomRouteLeg nearestLeg(CustomRoute route) {
+        if (route.legs.isEmpty()) return null;
+        updateLocation();
+        if (lastLocation == null) return route.legs.get(0);
+        CustomRouteLeg best = route.legs.get(0);
+        double bestMeters = Double.MAX_VALUE;
+        for (CustomRouteLeg leg : route.legs) {
+            if (leg.startLat == 0 && leg.startLon == 0) continue;
+            float[] out = new float[1];
+            Location.distanceBetween(lastLocation.getLatitude(), lastLocation.getLongitude(), leg.startLat, leg.startLon, out);
+            if (out[0] < bestMeters) {
+                bestMeters = out[0];
+                best = leg;
+            }
         }
-        if (start > end) { int tmp = start; start = end; end = tmp; }
-        return new ArrayList<>(stops.subList(start, end + 1));
+        return best;
+    }
+
+    private void loadFirstEtaInto(CustomRouteLeg leg, TextView target) {
+        io.execute(() -> {
+            try {
+                List<String> times = api.etas(leg.bookmark(), leg.startStop());
+                String label = times.isEmpty() ? "No data" : times.get(0);
+                runOnUiThread(() -> {
+                    target.setText(label);
+                    target.setTextColor(times.isEmpty() ? MUTED : GREEN);
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    target.setText("No data");
+                    target.setTextColor(MUTED);
+                });
+            }
+        });
     }
 
     private void saveCustomRoute(CustomRoute customRoute) {
@@ -501,7 +610,7 @@ public class MainActivity extends Activity {
             TextView title = text(b.route + "  " + opName(b.operator), 25, TEXT, true);
             header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
             Button tracking = trackingButton(b);
-            LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-2, dp(32));
+            LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-2, dp(30));
             tp.setMargins(dp(8), 0, dp(8), 0);
             header.addView(tracking, tp);
             trackingButtons.put(b.storageKey(), tracking);
@@ -1111,7 +1220,7 @@ public class MainActivity extends Activity {
     private int buttonText() { return Color.rgb(17, 22, 30); }
     private int navText() { return Color.WHITE; }
     private int menuButtonSurface() { return blend(Color.rgb(226, 232, 242), BLUE, 0.22f); }
-    private int navMutedText() { return blend(Color.rgb(58, 65, 80), BLUE, 0.12f); }
+    private int navMutedText() { return blend(Color.rgb(170, 190, 218), BLUE, 0.42f); }
 
     private TextView iconSymbolButton(String symbol, int sp) {
         TextView button = text(symbol, sp, navText(), true);
@@ -1698,18 +1807,75 @@ public class MainActivity extends Activity {
 
 
     static class CustomRoute {
-        final String id, name, operator, route, dir, serviceType, startStopId, startName, endStopId, endName;
-        final int startSeq, endSeq;
-        CustomRoute(String id, String name, String operator, String route, String dir, String serviceType, String startStopId, String startName, int startSeq, String endStopId, String endName, int endSeq) {
-            this.id = clean(id); this.name = clean(name); this.operator = operator; this.route = route; this.dir = dir; this.serviceType = serviceType;
-            this.startStopId = clean(startStopId); this.startName = clean(startName); this.startSeq = startSeq; this.endStopId = clean(endStopId); this.endName = clean(endName); this.endSeq = endSeq;
+        final String id, name;
+        final List<CustomRouteLeg> legs;
+        CustomRoute(String id, String name, List<CustomRouteLeg> legs) {
+            this.id = clean(id);
+            this.name = clean(name);
+            this.legs = legs == null ? new ArrayList<>() : legs;
         }
-        Bookmark bookmark() { return new Bookmark(operator, route, dir, serviceType, startName, endName, "Ungrouped"); }
-        String serialize() { return id + "|" + name + "|" + operator + "|" + route + "|" + dir + "|" + serviceType + "|" + startStopId + "|" + startName + "|" + startSeq + "|" + endStopId + "|" + endName + "|" + endSeq; }
+        String serialize() {
+            try {
+                JSONObject o = new JSONObject();
+                o.put("id", id);
+                o.put("name", name);
+                JSONArray arr = new JSONArray();
+                for (CustomRouteLeg leg : legs) arr.put(leg.toJson());
+                o.put("legs", arr);
+                return o.toString();
+            } catch (Exception e) {
+                return id + "|" + name;
+            }
+        }
         static CustomRoute parse(String s) {
-            String[] p = s.split("\\|", -1);
-            if (p.length < 12) return null;
-            try { return new CustomRoute(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], Integer.parseInt(p[8]), p[9], p[10], Integer.parseInt(p[11])); } catch (Exception e) { return null; }
+            if (s == null || s.length() == 0) return null;
+            try {
+                if (s.trim().startsWith("{")) {
+                    JSONObject o = new JSONObject(s);
+                    JSONArray arr = o.optJSONArray("legs");
+                    List<CustomRouteLeg> legs = new ArrayList<>();
+                    if (arr != null) {
+                        for (int i = 0; i < arr.length(); i++) {
+                            CustomRouteLeg leg = CustomRouteLeg.fromJson(arr.getJSONObject(i));
+                            if (leg != null) legs.add(leg);
+                        }
+                    }
+                    return new CustomRoute(o.optString("id", String.valueOf(System.currentTimeMillis())), o.optString("name", "Route"), legs);
+                }
+                String[] p = s.split("\\|", -1);
+                if (p.length < 12) return null;
+                CustomRouteLeg leg = new CustomRouteLeg(p[2], p[3], p[4], p[5], p[7], p[10], p[6], p[7], parseInt(p[8]), 0, 0, p[9], p[10], parseInt(p[11]), 0, 0);
+                List<CustomRouteLeg> legs = new ArrayList<>();
+                legs.add(leg);
+                return new CustomRoute(p[0], p[1], legs);
+            } catch (Exception e) { return null; }
+        }
+        static int parseInt(String value) { try { return Integer.parseInt(value); } catch (Exception e) { return 0; } }
+        static String clean(String value) { return value == null ? "" : value.replace("|", " "); }
+    }
+
+    static class CustomRouteLeg {
+        final String operator, route, dir, serviceType, from, to, startStopId, startName, endStopId, endName;
+        final int startSeq, endSeq;
+        final double startLat, startLon, endLat, endLon;
+        CustomRouteLeg(String operator, String route, String dir, String serviceType, String from, String to, String startStopId, String startName, int startSeq, double startLat, double startLon, String endStopId, String endName, int endSeq, double endLat, double endLon) {
+            this.operator = operator; this.route = route; this.dir = dir; this.serviceType = serviceType; this.from = clean(from); this.to = clean(to);
+            this.startStopId = clean(startStopId); this.startName = clean(startName); this.startSeq = startSeq; this.startLat = startLat; this.startLon = startLon;
+            this.endStopId = clean(endStopId); this.endName = clean(endName); this.endSeq = endSeq; this.endLat = endLat; this.endLon = endLon;
+        }
+        Bookmark bookmark() { return new Bookmark(operator, route, dir, serviceType, from, to, "Ungrouped"); }
+        Stop startStop() { return new Stop(startStopId, startName, startSeq, startLat, startLon); }
+        JSONObject toJson() throws Exception {
+            JSONObject o = new JSONObject();
+            o.put("operator", operator); o.put("route", route); o.put("dir", dir); o.put("serviceType", serviceType); o.put("from", from); o.put("to", to);
+            o.put("startStopId", startStopId); o.put("startName", startName); o.put("startSeq", startSeq); o.put("startLat", startLat); o.put("startLon", startLon);
+            o.put("endStopId", endStopId); o.put("endName", endName); o.put("endSeq", endSeq); o.put("endLat", endLat); o.put("endLon", endLon);
+            return o;
+        }
+        static CustomRouteLeg fromJson(JSONObject o) {
+            try {
+                return new CustomRouteLeg(o.optString("operator"), o.optString("route"), o.optString("dir", "outbound"), o.optString("serviceType", "1"), o.optString("from"), o.optString("to"), o.optString("startStopId"), o.optString("startName"), o.optInt("startSeq", 0), o.optDouble("startLat", 0), o.optDouble("startLon", 0), o.optString("endStopId"), o.optString("endName"), o.optInt("endSeq", 0), o.optDouble("endLat", 0), o.optDouble("endLon", 0));
+            } catch (Exception e) { return null; }
         }
         static String clean(String value) { return value == null ? "" : value.replace("|", " "); }
     }
