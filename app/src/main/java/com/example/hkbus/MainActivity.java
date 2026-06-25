@@ -257,7 +257,17 @@ public class MainActivity extends Activity {
             CustomRouteLeg nearest = nearestLeg(customRoute);
             box.addView(collapsedRouteSummary(nearest));
             if (expandedCustomRoutes.contains(customRoute.id)) {
-                for (CustomRouteLeg leg : customRoute.legs) box.addView(customRouteLegCard(leg, false));
+                boolean first = true;
+                for (CustomRouteLeg leg : customRoute.legs) {
+                    View legCard = customRouteLegCard(leg, false);
+                    if (first) {
+                        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+                        lp.setMargins(0, dp(12), 0, dp(12));
+                        legCard.setLayoutParams(lp);
+                        first = false;
+                    }
+                    box.addView(legCard);
+                }
             }
         }
 
@@ -402,6 +412,7 @@ public class MainActivity extends Activity {
     }
 
     private void chooseRouteStops(Route route, CustomRoute customRoute) {
+        showLoadingSheet("Loading Bus Route", "Loading bus route stops...");
         Bookmark b = new Bookmark(route.operator, route.route, "outbound", route.serviceType, route.orig, route.dest, "Ungrouped");
         io.execute(() -> {
             try {
@@ -414,13 +425,11 @@ public class MainActivity extends Activity {
     }
 
     private void chooseStartStop(Route route, List<Stop> stops, CustomRoute customRoute) {
-        String[] names = stopOptionLabels(stops);
-        showOptionSheet("Starting Stop", names, (startIndex, label) -> chooseEndStop(route, stops, startIndex, customRoute));
+        showStopPickerSheet("Starting Stop", stops, (startIndex, label) -> chooseEndStop(route, stops, startIndex, customRoute));
     }
 
     private void chooseEndStop(Route route, List<Stop> stops, int startIndex, CustomRoute customRoute) {
-        String[] names = stopOptionLabels(stops);
-        showOptionSheet("Ending Stop", names, (endIndex, label) -> {
+        showStopPickerSheet("Ending Stop", stops, (endIndex, label) -> {
             Stop start = stops.get(startIndex);
             Stop end = stops.get(endIndex);
             CustomRouteLeg leg = new CustomRouteLeg(route.operator, route.route, "outbound", route.serviceType, route.orig, route.dest, start.id, start.name, start.seq, start.lat, start.lon, end.id, end.name, end.seq, end.lat, end.lon);
@@ -584,10 +593,10 @@ public class MainActivity extends Activity {
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.VERTICAL);
         actions.setPadding(0, dp(12), 0, 0);
-        Button outbound = pill("Save Route in This Direction");
+        Button outbound = materialButton("Save Route in This Direction");
         outbound.setTextSize(13);
         outbound.setOnClickListener(v -> saveBookmark(new Bookmark(r.operator, r.route, "outbound", r.serviceType, r.orig, r.dest, "Ungrouped")));
-        Button inbound = pill("Save Route in Opposite Direction");
+        Button inbound = materialButton("Save Route in Opposite Direction");
         inbound.setTextSize(13);
         inbound.setOnClickListener(v -> saveBookmark(new Bookmark(r.operator, r.route, "inbound", r.serviceType, r.dest, r.orig, "Ungrouped")));
         actions.addView(outbound, new LinearLayout.LayoutParams(-1, dp(52)));
@@ -1637,6 +1646,71 @@ public class MainActivity extends Activity {
         }
     }
 
+
+
+    private void showLoadingSheet(String title, String message) {
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        TextView status = text(message, 16, MUTED, false);
+        status.setGravity(Gravity.CENTER);
+        status.setPadding(dp(18), dp(22), dp(18), dp(22));
+        body.addView(status, new LinearLayout.LayoutParams(-1, -2));
+        showBottomSheet(title, body);
+    }
+
+    private void showStopPickerSheet(String title, List<Stop> stops, OptionHandler handler) {
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        EditText search = new EditText(this);
+        search.setSingleLine(true);
+        search.setHint("Search stop");
+        search.setHintTextColor(MUTED);
+        search.setTextColor(TEXT);
+        search.setTextSize(16);
+        search.setPadding(dp(18), 0, dp(18), 0);
+        search.setBackground(round(fieldSurface(), dp(22), tint(BLUE, 0.45f)));
+        body.addView(search, new LinearLayout.LayoutParams(-1, dp(54)));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(list);
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, dp(360));
+        slp.setMargins(0, dp(12), 0, 0);
+        body.addView(scroll, slp);
+
+        Runnable render = () -> {
+            list.removeAllViews();
+            String q = search.getText().toString().trim().toLowerCase(Locale.US);
+            int shown = 0;
+            int limit = Math.min(stops.size(), 160);
+            for (int i = 0; i < limit; i++) {
+                Stop stop = stops.get(i);
+                String label = stop.seq + ". " + stop.name;
+                if (!q.isEmpty() && !label.toLowerCase(Locale.US).contains(q)) continue;
+                final int index = i;
+                Button option = sheetButton(label);
+                option.setOnClickListener(v -> {
+                    dismissSheet();
+                    handler.onSelect(index, label);
+                });
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(56));
+                lp.setMargins(0, 0, 0, dp(8));
+                list.addView(option, lp);
+                shown++;
+            }
+            if (shown == 0) list.addView(centerStatus("No matching stops"));
+        };
+        search.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+            public void onTextChanged(CharSequence s, int st, int b, int c) { render.run(); }
+            public void afterTextChanged(Editable e) {}
+        });
+        render.run();
+        showBottomSheet(title, body);
+    }
 
     private void showRoutePickerSheet(String title, List<Route> choices, RouteOptionHandler handler) {
         LinearLayout body = new LinearLayout(this);
