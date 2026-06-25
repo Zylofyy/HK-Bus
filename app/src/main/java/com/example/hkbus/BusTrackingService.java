@@ -15,6 +15,7 @@ import android.graphics.drawable.Icon;
 import android.location.Location;
 import android.location.LocationManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
@@ -137,63 +138,25 @@ public class BusTrackingService extends Service {
                         "Cancel",
                         cancelPending).build());
         requestPromotedLiveUpdate(builder);
-        setShortCriticalText(builder, next);
-        applyProgressStyle(builder, progress, accent);
+        applyProgressStyle(builder, progress);
+        if (Build.VERSION.SDK_INT >= 36) builder.setShortCriticalText(next);
         return builder.build();
     }
 
 
     private void requestPromotedLiveUpdate(Notification.Builder builder) {
-        try {
-            builder.getClass().getMethod("setRequestPromotedOngoing", boolean.class).invoke(builder, true);
-        } catch (Throwable ignored) {}
-    }
-    private void setShortCriticalText(Notification.Builder builder, String text) {
-        try {
-            builder.getClass().getMethod("setShortCriticalText", CharSequence.class).invoke(builder, text);
-        } catch (Throwable ignored) {}
+        Bundle extras = new Bundle();
+        extras.putBoolean("android.requestPromotedOngoing", true);
+        builder.addExtras(extras);
     }
 
-    private void applyProgressStyle(Notification.Builder builder, int progress, int accent) {
+    private void applyProgressStyle(Notification.Builder builder, int progress) {
         if (Build.VERSION.SDK_INT < 36) return;
-        try {
-            Class<?> styleClass = Class.forName("android.app.Notification$ProgressStyle");
-            Object style = styleClass.getConstructor().newInstance();
-            int clamped = Math.max(0, Math.min(100, progress));
-            styleClass.getMethod("setProgress", int.class).invoke(style, clamped);
-            styleClass.getMethod("setStyledByProgress", boolean.class).invoke(style, false);
-
-            Class<?> segmentClass = Class.forName("android.app.Notification$ProgressStyle$Segment");
-            List<Object> segments = new ArrayList<>();
-            if (clamped > 0) {
-                Object elapsed = segmentClass.getConstructor(int.class).newInstance(clamped);
-                segmentClass.getMethod("setColor", int.class).invoke(elapsed, accent);
-                segments.add(elapsed);
-            }
-            if (clamped < 100) {
-                Object remaining = segmentClass.getConstructor(int.class).newInstance(100 - clamped);
-                segmentClass.getMethod("setColor", int.class).invoke(remaining, Color.argb(90, Color.red(accent), Color.green(accent), Color.blue(accent)));
-                segments.add(remaining);
-            }
-            if (segments.isEmpty()) {
-                Object complete = segmentClass.getConstructor(int.class).newInstance(100);
-                segmentClass.getMethod("setColor", int.class).invoke(complete, accent);
-                segments.add(complete);
-            }
-            styleClass.getMethod("setProgressSegments", List.class).invoke(style, segments);
-
-            Class<?> pointClass = Class.forName("android.app.Notification$ProgressStyle$Point");
-            List<Object> points = new ArrayList<>();
-            for (int point : new int[]{25, 50, 75}) {
-                Object marker = pointClass.getConstructor(int.class).newInstance(point);
-                pointClass.getMethod("setColor", int.class).invoke(marker, Color.argb(210, 48, 209, 88));
-                points.add(marker);
-            }
-            styleClass.getMethod("setProgressPoints", List.class).invoke(style, points);
-            builder.setStyle((Notification.Style) style);
-        } catch (Throwable ignored) {
-            builder.setProgress(100, progress, false);
-        }
+        int clamped = Math.max(0, Math.min(100, progress));
+        Notification.ProgressStyle style = new Notification.ProgressStyle()
+                .setProgress(clamped)
+                .setStyledByProgress(true);
+        builder.setStyle(style);
     }
 
     private MainActivity.Stop nearest(List<MainActivity.Stop> stops) {

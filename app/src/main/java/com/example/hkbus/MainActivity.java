@@ -241,6 +241,10 @@ public class MainActivity extends Activity {
 
     private View customRouteCard(CustomRoute customRoute) {
         LinearLayout box = card();
+        box.setOnLongClickListener(v -> {
+            showCustomRouteMenu(customRoute);
+            return true;
+        });
         TextView title = text(customRoute.name, 22, TEXT, true);
         box.addView(title);
 
@@ -394,7 +398,7 @@ public class MainActivity extends Activity {
         int limit = Math.min(choices.size(), 120);
         String[] labels = new String[limit];
         for (int i = 0; i < limit; i++) labels[i] = choices.get(i).route + " " + opName(choices.get(i).operator) + "  " + choices.get(i).orig + " -> " + choices.get(i).dest;
-        showOptionSheet("Select Bus Route", labels, (index, label) -> chooseRouteStops(choices.get(index), customRoute));
+        showRoutePickerSheet("Select Bus Route", choices.subList(0, limit), route -> chooseRouteStops(route, customRoute));
     }
 
     private void chooseRouteStops(Route route, CustomRoute customRoute) {
@@ -466,6 +470,37 @@ public class MainActivity extends Activity {
                 });
             }
         });
+    }
+
+    private void showCustomRouteMenu(CustomRoute customRoute) {
+        showOptionSheet(customRoute.name, new String[]{"Rename", "Delete"}, (index, choice) -> {
+            if ("Rename".equals(choice)) showRenameCustomRouteSheet(customRoute);
+            else if ("Delete".equals(choice)) {
+                deleteCustomRoute(customRoute);
+                showRoutes();
+            }
+        });
+    }
+
+    private void showRenameCustomRouteSheet(CustomRoute customRoute) {
+        showTextInputSheet("Rename Route", customRoute.name, "Route name", value -> {
+            String name = value == null ? "" : value.trim();
+            if (name.length() == 0) return;
+            CustomRoute renamed = new CustomRoute(customRoute.id, name, customRoute.legs);
+            saveCustomRoute(renamed);
+            showRoutes();
+        });
+    }
+
+    private void deleteCustomRoute(CustomRoute customRoute) {
+        Set<String> set = new HashSet<>(prefs.getStringSet("customRoutes", new HashSet<>()));
+        Set<String> next = new HashSet<>();
+        for (String s : set) {
+            CustomRoute existing = CustomRoute.parse(s);
+            if (existing == null || !existing.id.equals(customRoute.id)) next.add(s);
+        }
+        prefs.edit().putStringSet("customRoutes", next).apply();
+        expandedCustomRoutes.remove(customRoute.id);
     }
 
     private void saveCustomRoute(CustomRoute customRoute) {
@@ -1185,6 +1220,7 @@ public class MainActivity extends Activity {
     }
 
     interface OptionHandler { void onSelect(int index, String label); }
+    interface RouteOptionHandler { void onSelect(Route route); }
     interface TextHandler { void onText(String value); }
 
     private void loadThemeColor() {
@@ -1599,6 +1635,58 @@ public class MainActivity extends Activity {
         } else {
             showBottomSheet(title, body);
         }
+    }
+
+
+    private void showRoutePickerSheet(String title, List<Route> choices, RouteOptionHandler handler) {
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        EditText search = new EditText(this);
+        search.setSingleLine(true);
+        search.setHint("Search bus route");
+        search.setHintTextColor(MUTED);
+        search.setTextColor(TEXT);
+        search.setTextSize(16);
+        search.setPadding(dp(18), 0, dp(18), 0);
+        search.setBackground(round(fieldSurface(), dp(22), tint(BLUE, 0.45f)));
+        body.addView(search, new LinearLayout.LayoutParams(-1, dp(54)));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(list);
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, dp(360));
+        slp.setMargins(0, dp(12), 0, 0);
+        body.addView(scroll, slp);
+
+        Runnable render = () -> {
+            list.removeAllViews();
+            String q = search.getText().toString().trim().toLowerCase(Locale.US);
+            int shown = 0;
+            for (Route route : choices) {
+                String label = route.route + " " + opName(route.operator) + "  " + route.orig + " -> " + route.dest;
+                if (!q.isEmpty() && !label.toLowerCase(Locale.US).contains(q)) continue;
+                Button option = sheetButton(label);
+                option.setOnClickListener(v -> {
+                    dismissSheet();
+                    handler.onSelect(route);
+                });
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(56));
+                lp.setMargins(0, 0, 0, dp(8));
+                list.addView(option, lp);
+                if (++shown >= 80) break;
+            }
+            if (shown == 0) list.addView(centerStatus("No matching routes"));
+        };
+        search.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+            public void onTextChanged(CharSequence s, int st, int b, int c) { render.run(); }
+            public void afterTextChanged(Editable e) {}
+        });
+        render.run();
+        showBottomSheet(title, body);
     }
 
     private void showTextInputSheet(String title, String initial, String hint, TextHandler handler) {
