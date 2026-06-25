@@ -21,6 +21,7 @@ import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.provider.MediaStore;
 import android.provider.Settings;
 import android.os.Bundle;
 import android.text.Editable;
@@ -179,9 +180,9 @@ private int tab = 0;
         nav = new LinearLayout(this);
         nav.setGravity(Gravity.CENTER);
         nav.setPadding(dp(16), dp(8), dp(16), dp(8));
-        navIsland.addView(nav, new FrameLayout.LayoutParams(-1, -1));
-        FrameLayout.LayoutParams np = new FrameLayout.LayoutParams(-1, dp(104), Gravity.BOTTOM);
-        np.setMargins(0, 0, 0, dp(12));
+        navIsland.addView(nav, new FrameLayout.LayoutParams(-1, dp(104), Gravity.TOP));
+        FrameLayout.LayoutParams np = new FrameLayout.LayoutParams(-1, dp(116), Gravity.BOTTOM);
+        np.setMargins(0, 0, 0, 0);
         root.addView(navIsland, np);
 
         groupFab = themedImageButton(R.drawable.ic_plus_round, floatingSurface(), buttonText(), Color.TRANSPARENT, dp(22));
@@ -1730,10 +1731,17 @@ private int tab = 0;
 
     private void pickCustomBackground() {
         dismissSheet();
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("image/*");
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        Intent intent;
+        if (Build.VERSION.SDK_INT >= 33) {
+            intent = new Intent(MediaStore.ACTION_PICK_IMAGES);
+            intent.setType("image/*");
+        } else {
+            intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("image/*");
+            intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        }
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         startActivityForResult(intent, PICK_BACKGROUND_IMAGE);
     }
 
