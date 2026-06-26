@@ -435,6 +435,13 @@ private int tab = 0;
         sp.setMargins(0, dp(12), 0, dp(10));
         box.addView(routeEndsView(leg.startName, leg.endName), sp);
 
+        TextView etaStop = text(leg.startName, 13, MUTED, false);
+        etaStop.setSingleLine(true);
+        etaStop.setEllipsize(TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(-1, -2);
+        labelLp.setMargins(0, dp(2), 0, dp(6));
+        box.addView(etaStop, labelLp);
+
         LinearLayout etaRow = etaBoxRow(null);
         box.addView(etaRow);
         loadEtaRowInto(leg.bookmark(), leg.startStop(), etaRow);
@@ -1990,11 +1997,13 @@ private int tab = 0;
         wrap.setOrientation(LinearLayout.VERTICAL);
         wrap.setGravity(Gravity.CENTER_HORIZONTAL);
         wrap.addView(stopBox(startLabel, true), new LinearLayout.LayoutParams(-1, -2));
-        View line = new View(this);
-        line.setBackgroundColor(tint(BLUE, 0.55f));
-        LinearLayout.LayoutParams lineLp = new LinearLayout.LayoutParams(dp(2), dp(10));
-        lineLp.setMargins(0, dp(3), 0, dp(3));
-        wrap.addView(line, lineLp);
+        ImageView arrow = new ImageView(this);
+        arrow.setImageResource(R.drawable.ic_route_arrow_down);
+        arrow.setColorFilter(tint(BLUE, 0.62f));
+        arrow.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        LinearLayout.LayoutParams lineLp = new LinearLayout.LayoutParams(dp(22), dp(14));
+        lineLp.setMargins(0, dp(2), 0, dp(2));
+        wrap.addView(arrow, lineLp);
         wrap.addView(stopBox(endLabel, false), new LinearLayout.LayoutParams(-1, -2));
         return wrap;
     }
