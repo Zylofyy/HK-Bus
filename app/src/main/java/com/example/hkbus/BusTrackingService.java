@@ -21,9 +21,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
 
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -135,9 +133,9 @@ public class BusTrackingService extends Service {
         String route = b == null ? "HK Bus" : b.route + " " + opName(b.operator);
         int accent = themeColor();
         boolean etaLabel = isEtaLabel(next);
-        String arrivalText = etaLabel ? arrivalClockText(next) : next;
+        String arrivalText = etaLabel ? timeUntilText(next) : next;
         String contentText = etaLabel ? arrivalText + " at " + stopName : next;
-        String subText = etaLabel ? stopName : stopName;
+        String subText = stopName;
         Intent appIntent = new Intent(this, MainActivity.class);
         PendingIntent contentIntent = PendingIntent.getActivity(this, 0, appIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Intent cancelIntent = new Intent(this, BusTrackingService.class).setAction(ACTION_CANCEL);
@@ -181,11 +179,12 @@ public class BusTrackingService extends Service {
         return "due".equals(lower) || lower.endsWith(" min") || lower.contains(" minutes") || lower.matches(".*\\d+.*min.*");
     }
 
-    private String arrivalClockText(String eta) {
+    private String timeUntilText(String eta) {
         long etaMs = etaMillis(eta);
-        if (etaMs == 0) return new SimpleDateFormat("h:mm a", Locale.US).format(new Date(System.currentTimeMillis()));
+        if (etaMs == 0) return "Due";
         if (etaMs < 0) return eta == null || eta.length() == 0 ? "No ETA" : eta;
-        return new SimpleDateFormat("h:mm a", Locale.US).format(new Date(System.currentTimeMillis() + etaMs));
+        long minutes = Math.max(1, Math.round(etaMs / 60000f));
+        return minutes + " min";
     }
 
     private long etaMillis(String eta) {
@@ -293,5 +292,6 @@ public class BusTrackingService extends Service {
 
     private static String opName(String op) { if ("KMB".equals(op)) return "KMB"; if ("MTR".equals(op)) return "MTR"; if ("NLB".equals(op)) return "NLB"; return "Citybus"; }
 }
+
 
 

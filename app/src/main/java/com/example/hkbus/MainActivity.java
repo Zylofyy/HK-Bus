@@ -539,7 +539,7 @@ private int tab = 0;
         int safeIndex = Math.max(0, Math.min(insertIndex, customRoute.legs.size()));
         Stop fixedStart = safeIndex > 0 ? customRoute.legs.get(safeIndex - 1).endStop() : null;
         Stop fixedEnd = safeIndex < customRoute.legs.size() ? customRoute.legs.get(safeIndex).startStop() : null;
-        List<Route> choices = new ArrayList<>(routes);
+        List<Route> choices = uniqueRouteChoices(routes);
         Collections.sort(choices, Comparator.comparing((Route r) -> r.route.length()).thenComparing(r -> r.route));
         showRoutePickerSheet(t("Select Bus Route"), choices, route -> chooseRouteDirection(route, customRoute, safeIndex, fixedStart, fixedEnd));
     }
@@ -611,6 +611,15 @@ private int tab = 0;
         return new CustomRouteLeg(route.operator, route.route, dir, route.serviceType, from, to, start.id, start.name, start.seq, start.lat, start.lon, end.id, end.name, end.seq, end.lat, end.lon);
     }
 
+    private List<Route> uniqueRouteChoices(List<Route> source) {
+        List<Route> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (Route route : source) {
+            String key = route.operator + "|" + route.route;
+            if (seen.add(key)) out.add(route);
+        }
+        return out;
+    }
     private String directionLabel(Route route, String dir) {
         return directionFrom(route, dir) + " -> " + directionTo(route, dir);
     }
@@ -626,7 +635,7 @@ private int tab = 0;
     private void beginAddAlternativeRoute(CustomRoute customRoute, int index) {
         if (index < 0 || index >= customRoute.legs.size()) return;
         if (routes.isEmpty()) { showInfoSheet(t("Routes"), "Routes are still loading."); return; }
-        List<Route> choices = new ArrayList<>(routes);
+        List<Route> choices = uniqueRouteChoices(routes);
         Collections.sort(choices, Comparator.comparing((Route r) -> r.route.length()).thenComparing(r -> r.route));
         showRoutePickerSheet(t("Select Bus Route"), choices, route -> chooseAlternativeDirection(route, customRoute, index));
     }
@@ -2558,7 +2567,7 @@ private int tab = 0;
         scroll.setFillViewport(false);
         scroll.setClipToPadding(false);
         scroll.setPadding(0, 0, 0, dp(120));
-        applyCardScrollFade(scroll);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list);
@@ -2645,7 +2654,7 @@ private int tab = 0;
         scroll.setFillViewport(false);
         scroll.setClipToPadding(false);
         scroll.setPadding(0, 0, 0, dp(120));
-        applyCardScrollFade(scroll);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list);
@@ -2713,7 +2722,7 @@ private int tab = 0;
         scroll.setFillViewport(false);
         scroll.setClipToPadding(false);
         scroll.setPadding(0, 0, 0, dp(120));
-        applyCardScrollFade(scroll);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list);
@@ -2726,8 +2735,9 @@ private int tab = 0;
             String q = search.getText().toString().trim().toLowerCase(Locale.US);
             int shown = 0;
             for (Route route : choices) {
-                String label = route.route + " " + opName(route.operator) + "  " + route.orig + " -> " + route.dest;
-                if (!q.isEmpty() && !label.toLowerCase(Locale.US).contains(q)) continue;
+                String label = route.route + " " + opName(route.operator);
+                String hay = (label + " " + route.orig + " " + route.dest).toLowerCase(Locale.US);
+                if (!q.isEmpty() && !hay.contains(q)) continue;
                 Button option = sheetButton(label);
                 option.setOnClickListener(v -> {
                     dismissSheet();
@@ -3539,4 +3549,6 @@ private int tab = 0;
         }
     }
 }
+
+
 
