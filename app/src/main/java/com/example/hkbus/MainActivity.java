@@ -1758,7 +1758,7 @@ private int tab = 0;
 
     private void updateTrackingButton(Button button, Bookmark bookmark) {
         boolean tracking = isTracking(bookmark);
-        button.setText(tracking ? t("Cancel Tracking") : t("Track"));
+        button.setText(tracking ? t("Cancel") : t("Track"));
         button.setTextColor(tracking ? Color.WHITE : buttonText());
         button.setBackground(round(tracking ? BLUE : menuButtonSurface(), dp(16), Color.TRANSPARENT));
         button.setContentDescription(tracking ? "Stop live tracking" : "Start live tracking");
