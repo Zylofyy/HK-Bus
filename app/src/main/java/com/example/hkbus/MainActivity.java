@@ -17,8 +17,6 @@ import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.RenderEffect;
 import android.graphics.Shader;
-import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.RippleDrawable;
 import android.location.Location;
 import android.location.LocationManager;
 import android.net.Uri;
@@ -101,6 +99,7 @@ private static final int BG = Color.rgb(5, 7, 13);
     private ImageButton groupFab;
     private ImageButton topMenu;
     private ImageView backgroundImage;
+    private ProgressBar refreshThrobber;
 private int tab = 0;
     private SharedPreferences prefs;
     private final List<Route> routes = new ArrayList<>();
@@ -185,6 +184,15 @@ private int tab = 0;
         FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP | Gravity.RIGHT);
         mp.setMargins(0, dp(34), dp(18), 0);
         root.addView(topMenu, mp);
+
+        refreshThrobber = new ProgressBar(this);
+        refreshThrobber.setIndeterminate(true);
+        refreshThrobber.setAlpha(0f);
+        refreshThrobber.setTranslationY(-dp(42));
+        if (Build.VERSION.SDK_INT >= 21) refreshThrobber.setIndeterminateTintList(ColorStateList.valueOf(BLUE));
+        FrameLayout.LayoutParams rp = new FrameLayout.LayoutParams(dp(34), dp(34), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        rp.setMargins(0, dp(42), 0, 0);
+        root.addView(refreshThrobber, rp);
 
         navIsland = new FrameLayout(this);
         nav = new LinearLayout(this);
@@ -1671,6 +1679,7 @@ private int tab = 0;
             groupFab.setColorFilter(buttonText());
             groupFab.setBackground(round(floatingSurface(), dp(22), Color.TRANSPARENT));
         }
+        if (refreshThrobber != null && Build.VERSION.SDK_INT >= 21) refreshThrobber.setIndeterminateTintList(ColorStateList.valueOf(BLUE));
     }
 
     private int appBackground() { return blend(BG, BLUE, 0.16f); }
@@ -1901,7 +1910,11 @@ private int tab = 0;
                 case MotionEvent.ACTION_MOVE:
                     if (scroll.getScrollY() <= 0 && refreshDownY >= 0) {
                         float delta = event.getRawY() - refreshDownY;
-                        if (delta > 0) scroll.setTranslationY(Math.min(dp(72), delta / 3f));
+                        if (delta > 0) {
+                            float pull = Math.min(dp(72), delta / 3f);
+                            scroll.setTranslationY(pull);
+                            setRefreshThrobberPull(pull / (float) dp(72));
+                        }
                     }
                     return false;
                 case MotionEvent.ACTION_UP:
@@ -1910,7 +1923,10 @@ private int tab = 0;
                     scroll.animate().translationY(0).setDuration(180).setInterpolator(new DecelerateInterpolator()).start();
                     if (!refreshTriggered && pulled >= dp(42)) {
                         refreshTriggered = true;
+                        showRefreshThrobber();
                         refreshCurrentTab();
+                    } else {
+                        hideRefreshThrobber();
                     }
                     refreshDownY = -1f;
                     return false;
@@ -1918,6 +1934,26 @@ private int tab = 0;
                     return false;
             }
         });
+    }
+
+    private void setRefreshThrobberPull(float progress) {
+        if (refreshThrobber == null) return;
+        float p = Math.max(0f, Math.min(1f, progress));
+        refreshThrobber.animate().cancel();
+        refreshThrobber.setAlpha(p);
+        refreshThrobber.setTranslationY(-dp(42) + dp(42) * p);
+    }
+
+    private void showRefreshThrobber() {
+        if (refreshThrobber == null) return;
+        refreshThrobber.animate().cancel();
+        refreshThrobber.animate().alpha(1f).translationY(0).setDuration(140).setInterpolator(new DecelerateInterpolator()).start();
+        refreshThrobber.postDelayed(() -> hideRefreshThrobber(), 650);
+    }
+
+    private void hideRefreshThrobber() {
+        if (refreshThrobber == null) return;
+        refreshThrobber.animate().alpha(0f).translationY(-dp(42)).setDuration(220).setInterpolator(new DecelerateInterpolator()).start();
     }
 
     private void refreshCurrentTab() {
@@ -1934,9 +1970,7 @@ private int tab = 0;
 
     private void applyExpressivePress(View v) {
         v.setClickable(true);
-        if (Build.VERSION.SDK_INT >= 23) {
-            v.setForeground(new RippleDrawable(ColorStateList.valueOf(Color.argb(70, Color.red(BLUE), Color.green(BLUE), Color.blue(BLUE))), null, new ColorDrawable(Color.WHITE)));
-        }
+        if (Build.VERSION.SDK_INT >= 23) v.setForeground(null);
         v.setOnTouchListener((view, event) -> {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
@@ -1958,15 +1992,15 @@ private int tab = 0;
         wrap.addView(stopBox(startLabel, true), new LinearLayout.LayoutParams(-1, -2));
         View line = new View(this);
         line.setBackgroundColor(tint(BLUE, 0.55f));
-        LinearLayout.LayoutParams lineLp = new LinearLayout.LayoutParams(dp(2), dp(24));
-        lineLp.setMargins(0, dp(8), 0, dp(8));
+        LinearLayout.LayoutParams lineLp = new LinearLayout.LayoutParams(dp(2), dp(10));
+        lineLp.setMargins(0, dp(3), 0, dp(3));
         wrap.addView(line, lineLp);
         wrap.addView(stopBox(endLabel, false), new LinearLayout.LayoutParams(-1, -2));
         return wrap;
     }
 
     private TextView stopBox(String label, boolean strong) {
-        TextView box = text(label == null ? "" : label, strong ? 15 : 14, strong ? TEXT : MUTED, strong);
+        TextView box = text(label == null ? "" : label, 15, TEXT, false);
         box.setGravity(Gravity.CENTER);
         box.setMinHeight(dp(52));
         box.setPadding(dp(16), dp(10), dp(16), dp(10));
