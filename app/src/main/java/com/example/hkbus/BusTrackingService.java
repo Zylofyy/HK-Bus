@@ -21,7 +21,9 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -114,7 +116,7 @@ public class BusTrackingService extends Service {
                     if (bookmark == null || !bookmark.storageKey().equals(active.storageKey())) return;
                     Notification notification = buildNotification(next, selectedStop.name, progress);
                     ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(NOTIFICATION_ID, notification);
-                    schedulePoll("Due".equals(next) ? 12000 : 30000);
+                    schedulePoll(60000);
                 });
             } catch (Exception e) {
                 handler.post(() -> {
@@ -132,6 +134,10 @@ public class BusTrackingService extends Service {
         MainActivity.Bookmark b = bookmark;
         String route = b == null ? "HK Bus" : b.route + " " + opName(b.operator);
         int accent = themeColor();
+        boolean etaLabel = isEtaLabel(next);
+        String arrivalText = etaLabel ? arrivalClockText(next) : next;
+        String contentText = etaLabel ? arrivalText + " at " + stopName : next;
+        String subText = etaLabel ? stopName : stopName;
         Intent appIntent = new Intent(this, MainActivity.class);
         PendingIntent contentIntent = PendingIntent.getActivity(this, 0, appIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Intent cancelIntent = new Intent(this, BusTrackingService.class).setAction(ACTION_CANCEL);
@@ -140,28 +146,25 @@ public class BusTrackingService extends Service {
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_bus)
                 .setContentTitle(route + " next bus")
-                .setContentText(next + " at " + stopName)
-                .setSubText("Live bus tracking")
+                .setContentText(contentText)
+                .setSubText(subText)
                 .setContentIntent(contentIntent)
                 .setColor(accent)
                 .setColorized(false)
                 .setCategory(Notification.CATEGORY_STATUS)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
-                .setShowWhen(true)
-                .setWhen(etaTargetMs > 0 ? etaTargetMs : System.currentTimeMillis())
+                .setShowWhen(false)
+                .setWhen(System.currentTimeMillis())
                 .setDeleteIntent(cancelPending)
                 .setProgress(100, progress, false)
                 .addAction(new Notification.Action.Builder(
                         Icon.createWithResource(this, R.drawable.ic_track_cancel),
                         "Cancel",
                         cancelPending).build());
-        if (etaTargetMs > System.currentTimeMillis()) {
-            builder.setUsesChronometer(true).setChronometerCountDown(true);
-        }
         requestPromotedLiveUpdate(builder);
         applyProgressStyle(builder, progress);
-        if (Build.VERSION.SDK_INT >= 36) builder.setShortCriticalText(shortCriticalText(next));
+        if (Build.VERSION.SDK_INT >= 36) builder.setShortCriticalText(shortCriticalText(arrivalText));
         Notification notification = builder.build();
         if (Build.VERSION.SDK_INT >= 36) {
             NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
@@ -172,6 +175,27 @@ public class BusTrackingService extends Service {
         return notification;
     }
 
+    private boolean isEtaLabel(String eta) {
+        if (eta == null) return false;
+        String lower = eta.toLowerCase(Locale.US).trim();
+        return "due".equals(lower) || lower.endsWith(" min") || lower.contains(" minutes") || lower.matches(".*\\d+.*min.*");
+    }
+
+    private String arrivalClockText(String eta) {
+        long etaMs = etaMillis(eta);
+        if (etaMs == 0) return new SimpleDateFormat("h:mm a", Locale.US).format(new Date(System.currentTimeMillis()));
+        if (etaMs < 0) return eta == null || eta.length() == 0 ? "No ETA" : eta;
+        return new SimpleDateFormat("h:mm a", Locale.US).format(new Date(System.currentTimeMillis() + etaMs));
+    }
+
+    private long etaMillis(String eta) {
+        if (eta == null || eta.length() == 0) return -1;
+        String lower = eta.toLowerCase(Locale.US).trim();
+        if (lower.contains("due") || lower.contains("arriv")) return 0;
+        String digits = lower.replaceAll("[^0-9]", " ").trim();
+        if (digits.length() == 0) return -1;
+        try { return Math.max(1, Integer.parseInt(digits.split("\\s+")[0])) * 60000L; } catch (Exception e) { return -1; }
+    }
 
     private void requestPromotedLiveUpdate(Notification.Builder builder) {
         Bundle extras = new Bundle();
@@ -215,30 +239,23 @@ public class BusTrackingService extends Service {
     }
 
     private int progressFromEta(String eta) {
-        if (eta == null || eta.length() == 0) return 0;
-        if ("Due".equalsIgnoreCase(eta)) {
+        long etaMs = etaMillis(eta);
+        long now = System.currentTimeMillis();
+        if (etaMs == 0) {
+            etaTargetMs = now;
             etaWindowComplete = true;
             return 100;
         }
-        String lower = eta.toLowerCase(Locale.US);
-        if (lower.endsWith(" min")) {
-            try {
-                int minutes = Integer.parseInt(lower.replace(" min", "").trim());
-                long etaMs = Math.max(1, minutes) * 60000L;
-                long now = System.currentTimeMillis();
-                if (etaWindowDurationMs == 0 || etaWindowComplete) {
-                    etaWindowStartMs = now;
-                    etaWindowDurationMs = etaMs;
-                    etaTargetMs = now + etaMs;
-                    etaWindowComplete = false;
-                    return 0;
-                }
-                etaTargetMs = etaWindowStartMs + etaWindowDurationMs;
-                long elapsed = Math.max(0, now - etaWindowStartMs);
-                return Math.max(0, Math.min(100, Math.round(elapsed * 100f / etaWindowDurationMs)));
-            } catch (Exception ignored) {}
+        if (etaMs < 0) return 0;
+        if (etaWindowDurationMs == 0 || etaWindowComplete || etaMs > etaWindowDurationMs + 120000L) {
+            etaWindowStartMs = now;
+            etaWindowDurationMs = etaMs;
+            etaWindowComplete = false;
         }
-        return 0;
+        etaTargetMs = now + etaMs;
+        long total = Math.max(1, etaTargetMs - etaWindowStartMs);
+        long elapsed = Math.max(0, now - etaWindowStartMs);
+        return Math.max(0, Math.min(100, Math.round(elapsed * 100f / total)));
     }
 
     private String shortCriticalText(String next) {
@@ -276,3 +293,5 @@ public class BusTrackingService extends Service {
 
     private static String opName(String op) { if ("KMB".equals(op)) return "KMB"; if ("MTR".equals(op)) return "MTR"; if ("NLB".equals(op)) return "NLB"; return "Citybus"; }
 }
+
+

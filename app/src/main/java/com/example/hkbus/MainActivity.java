@@ -100,7 +100,7 @@ private static final int BG = Color.rgb(5, 7, 13);
     private ImageButton groupFab;
     private ImageButton topMenu;
     private ImageView backgroundImage;
-    private ProgressBar refreshThrobber;
+    private TextView refreshPrompt;
 private int tab = 0;
     private SharedPreferences prefs;
     private final List<Route> routes = new ArrayList<>();
@@ -201,7 +201,7 @@ private int tab = 0;
             else showCreateGroupDialog(null);
         });
         FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(dp(72), dp(72), Gravity.BOTTOM | Gravity.RIGHT);
-        fp.setMargins(0, 0, dp(24), dp(124));
+        fp.setMargins(0, 0, dp(8), dp(124));
         root.addView(groupFab, fp);
 
         applyThemeSurfaces();
@@ -436,9 +436,32 @@ private int tab = 0;
         LinearLayout etaRow = etaBoxRow(null);
         box.addView(etaRow);
         loadEtaRowInto(leg.bookmark(), leg.startStop(), etaRow);
+        if (!leg.alternatives.isEmpty()) {
+            LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, dp(52));
+            ap.setMargins(0, dp(10), 0, 0);
+            box.addView(alternativeRoutesView(leg.alternatives), ap);
+        }
         return box;
     }
 
+    private View alternativeRoutesView(List<CustomRouteLeg> alternatives) {
+        TextView pill = text(t("Alt routes") + ": " + alternativeRouteNames(alternatives), 15, TEXT, true);
+        pill.setGravity(Gravity.CENTER_VERTICAL);
+        pill.setSingleLine(true);
+        pill.setEllipsize(TextUtils.TruncateAt.END);
+        pill.setPadding(dp(18), 0, dp(18), 0);
+        pill.setBackground(round(elevatedSurface(), dp(24), outline()));
+        return pill;
+    }
+
+    private String alternativeRouteNames(List<CustomRouteLeg> alternatives) {
+        List<String> names = new ArrayList<>();
+        for (CustomRouteLeg leg : alternatives) {
+            String name = leg.route;
+            if (!names.contains(name)) names.add(name);
+        }
+        return names.isEmpty() ? "--" : String.join(", ", names);
+    }
     private void showCustomRouteEditor(CustomRoute customRoute) {
         if (navIsland != null) navIsland.setVisibility(View.GONE);
         if (groupFab != null) groupFab.setVisibility(View.GONE);
@@ -490,15 +513,17 @@ private int tab = 0;
     }
 
     private void showCustomRouteLegMenu(CustomRoute customRoute, int index) {
-        showOptionSheet(t("Bus Route"), new String[]{t("Remove Bus Route"), t("Add Bus Route Above"), t("Add Bus Route Below")}, (choiceIndex, choice) -> {
+        showOptionSheet(t("Bus Route"), new String[]{t("Add Alternative Route"), t("Remove Bus Route"), t("Add Bus Route Above"), t("Add Bus Route Below")}, (choiceIndex, choice) -> {
             if (choiceIndex == 0) {
+                beginAddAlternativeRoute(customRoute, index);
+            } else if (choiceIndex == 1) {
                 showDeleteConfirmationSheet(t("Remove Bus Route"), "Remove this bus route from the journey?", () -> {
                     if (index >= 0 && index < customRoute.legs.size()) customRoute.legs.remove(index);
                     showCustomRouteEditor(customRoute);
                 });
-            } else if (choiceIndex == 1) {
-                beginAddRouteLegAt(customRoute, Math.max(0, index));
             } else if (choiceIndex == 2) {
+                beginAddRouteLegAt(customRoute, Math.max(0, index));
+            } else if (choiceIndex == 3) {
                 beginAddRouteLegAt(customRoute, Math.min(customRoute.legs.size(), index + 1));
             }
         });
@@ -516,62 +541,154 @@ private int tab = 0;
         Stop fixedEnd = safeIndex < customRoute.legs.size() ? customRoute.legs.get(safeIndex).startStop() : null;
         List<Route> choices = new ArrayList<>(routes);
         Collections.sort(choices, Comparator.comparing((Route r) -> r.route.length()).thenComparing(r -> r.route));
-        showRoutePickerSheet(t("Select Bus Route"), choices, route -> chooseRouteStops(route, customRoute, safeIndex, fixedStart, fixedEnd));
+        showRoutePickerSheet(t("Select Bus Route"), choices, route -> chooseRouteDirection(route, customRoute, safeIndex, fixedStart, fixedEnd));
     }
 
-    private void chooseRouteStops(Route route, CustomRoute customRoute, int insertIndex, Stop fixedStart, Stop fixedEnd) {
+    private void chooseRouteDirection(Route route, CustomRoute customRoute, int insertIndex, Stop fixedStart, Stop fixedEnd) {
+        String[] options = {directionLabel(route, "outbound"), directionLabel(route, "inbound")};
+        showOptionSheet(t("Direction"), options, (choiceIndex, label) -> {
+            String dir = choiceIndex == 0 ? "outbound" : "inbound";
+            chooseRouteStops(route, dir, customRoute, insertIndex, fixedStart, fixedEnd);
+        });
+    }
+
+    private void chooseRouteStops(Route route, String dir, CustomRoute customRoute, int insertIndex, Stop fixedStart, Stop fixedEnd) {
         showLoadingSheet(t("Loading Bus Route"), t("Loading bus route stops..."));
         io.execute(() -> {
             try {
-                List<Stop> stops = cachedRouteStops(route, "outbound");
-                runOnUiThread(() -> chooseStartStop(route, stops, customRoute, insertIndex, fixedStart, fixedEnd));
+                List<Stop> stops = cachedRouteStops(route, dir);
+                runOnUiThread(() -> chooseStartStop(route, dir, stops, customRoute, insertIndex, fixedStart, fixedEnd));
             } catch (Exception e) {
                 runOnUiThread(() -> showInfoSheet(t("Routes"), "Could not load stops: " + e.getMessage()));
             }
         });
     }
 
-    private void chooseStartStop(Route route, List<Stop> stops, CustomRoute customRoute, int insertIndex, Stop fixedStart, Stop fixedEnd) {
+    private void chooseStartStop(Route route, String dir, List<Stop> stops, CustomRoute customRoute, int insertIndex, Stop fixedStart, Stop fixedEnd) {
         if (fixedStart != null) {
             int startIndex = matchingStopIndex(stops, fixedStart, 0);
             if (startIndex < 0) {
                 showInfoSheet(t("Routes"), "Selected bus route does not stop at the previous terminal stop.");
                 return;
             }
-            chooseEndStop(route, stops, startIndex, customRoute, insertIndex, fixedEnd);
+            chooseEndStop(route, dir, stops, startIndex, customRoute, insertIndex, fixedEnd);
         } else {
-            showStopPickerSheet(t("Starting Stop"), stops, (startIndex, label) -> chooseEndStop(route, stops, startIndex, customRoute, insertIndex, fixedEnd));
+            showStopPickerSheet(t("Starting Stop"), stops, (startIndex, label) -> chooseEndStop(route, dir, stops, startIndex, customRoute, insertIndex, fixedEnd));
         }
     }
 
-    private void chooseEndStop(Route route, List<Stop> stops, int startIndex, CustomRoute customRoute, int insertIndex, Stop fixedEnd) {
+    private void chooseEndStop(Route route, String dir, List<Stop> stops, int startIndex, CustomRoute customRoute, int insertIndex, Stop fixedEnd) {
         if (fixedEnd != null) {
             int endIndex = matchingStopIndex(stops, fixedEnd, startIndex + 1);
             if (endIndex < 0) {
                 showInfoSheet(t("Routes"), "Selected bus route cannot connect to the next starting stop.");
                 return;
             }
-            addCustomRouteLeg(route, stops, startIndex, endIndex, customRoute, insertIndex);
+            addCustomRouteLeg(route, dir, stops, startIndex, endIndex, customRoute, insertIndex);
         } else {
             showStopPickerSheet(t("Ending Stop"), stops, (endIndex, label) -> {
                 if (endIndex <= startIndex) {
                     showInfoSheet(t("Routes"), "Terminal stop must come after the starting stop.");
                     return;
                 }
-                addCustomRouteLeg(route, stops, startIndex, endIndex, customRoute, insertIndex);
+                addCustomRouteLeg(route, dir, stops, startIndex, endIndex, customRoute, insertIndex);
             });
         }
     }
 
-    private void addCustomRouteLeg(Route route, List<Stop> stops, int startIndex, int endIndex, CustomRoute customRoute, int insertIndex) {
-        Stop start = stops.get(startIndex);
-        Stop end = stops.get(endIndex);
-        CustomRouteLeg leg = new CustomRouteLeg(route.operator, route.route, "outbound", route.serviceType, route.orig, route.dest, start.id, start.name, start.seq, start.lat, start.lon, end.id, end.name, end.seq, end.lat, end.lon);
+    private void addCustomRouteLeg(Route route, String dir, List<Stop> stops, int startIndex, int endIndex, CustomRoute customRoute, int insertIndex) {
+        CustomRouteLeg leg = buildCustomRouteLeg(route, dir, stops, startIndex, endIndex);
         int safeIndex = Math.max(0, Math.min(insertIndex, customRoute.legs.size()));
         customRoute.legs.add(safeIndex, leg);
         showCustomRouteEditor(customRoute);
     }
 
+    private CustomRouteLeg buildCustomRouteLeg(Route route, String dir, List<Stop> stops, int startIndex, int endIndex) {
+        Stop start = stops.get(startIndex);
+        Stop end = stops.get(endIndex);
+        String from = directionFrom(route, dir);
+        String to = directionTo(route, dir);
+        return new CustomRouteLeg(route.operator, route.route, dir, route.serviceType, from, to, start.id, start.name, start.seq, start.lat, start.lon, end.id, end.name, end.seq, end.lat, end.lon);
+    }
+
+    private String directionLabel(Route route, String dir) {
+        return directionFrom(route, dir) + " -> " + directionTo(route, dir);
+    }
+
+    private String directionFrom(Route route, String dir) {
+        return "inbound".equals(dir) ? route.dest : route.orig;
+    }
+
+    private String directionTo(Route route, String dir) {
+        return "inbound".equals(dir) ? route.orig : route.dest;
+    }
+
+    private void beginAddAlternativeRoute(CustomRoute customRoute, int index) {
+        if (index < 0 || index >= customRoute.legs.size()) return;
+        if (routes.isEmpty()) { showInfoSheet(t("Routes"), "Routes are still loading."); return; }
+        List<Route> choices = new ArrayList<>(routes);
+        Collections.sort(choices, Comparator.comparing((Route r) -> r.route.length()).thenComparing(r -> r.route));
+        showRoutePickerSheet(t("Select Bus Route"), choices, route -> chooseAlternativeDirection(route, customRoute, index));
+    }
+
+    private void chooseAlternativeDirection(Route route, CustomRoute customRoute, int index) {
+        String[] options = {directionLabel(route, "outbound"), directionLabel(route, "inbound")};
+        showOptionSheet(t("Direction"), options, (choiceIndex, label) -> {
+            String dir = choiceIndex == 0 ? "outbound" : "inbound";
+            chooseAlternativeStops(route, dir, customRoute, index);
+        });
+    }
+
+    private void chooseAlternativeStops(Route route, String dir, CustomRoute customRoute, int index) {
+        if (index < 0 || index >= customRoute.legs.size()) return;
+        CustomRouteLeg primary = customRoute.legs.get(index);
+        showLoadingSheet(t("Loading Bus Route"), t("Loading bus route stops..."));
+        io.execute(() -> {
+            try {
+                List<Stop> stops = cachedRouteStops(route, dir);
+                int startIndex = matchingStopIndex(stops, primary.startStop(), 0);
+                int endIndex = startIndex < 0 ? -1 : matchingStopIndex(stops, primary.endStop(), startIndex + 1);
+                if (startIndex < 0 || endIndex < 0) {
+                    runOnUiThread(() -> showInfoSheet(t("Alternative Routes"), "Selected route must stop at the same starting and terminal stops."));
+                    return;
+                }
+                CustomRouteLeg alternative = buildCustomRouteLeg(route, dir, stops, startIndex, endIndex).withoutAlternatives();
+                runOnUiThread(() -> addAlternativeRouteLeg(customRoute, index, alternative));
+            } catch (Exception e) {
+                runOnUiThread(() -> showInfoSheet(t("Alternative Routes"), "Could not load stops: " + e.getMessage()));
+            }
+        });
+    }
+
+    private void addAlternativeRouteLeg(CustomRoute customRoute, int index, CustomRouteLeg alternative) {
+        if (index < 0 || index >= customRoute.legs.size()) return;
+        showLoadingSheet(t("Alternative Routes"), t("Checking arrivals..."));
+        io.execute(() -> {
+            CustomRouteLeg current = customRoute.legs.get(index);
+            List<CustomRouteLeg> candidates = new ArrayList<>();
+            addUniqueLegCandidate(candidates, current.withoutAlternatives());
+            for (CustomRouteLeg existing : current.alternatives) addUniqueLegCandidate(candidates, existing.withoutAlternatives());
+            addUniqueLegCandidate(candidates, alternative.withoutAlternatives());
+            CustomRouteLeg best = candidates.get(0);
+            int bestScore = etaScore(best);
+            for (int i = 1; i < candidates.size(); i++) {
+                CustomRouteLeg candidate = candidates.get(i);
+                int score = etaScore(candidate);
+                if (score < bestScore) {
+                    best = candidate;
+                    bestScore = score;
+                }
+            }
+            List<CustomRouteLeg> alternatives = new ArrayList<>();
+            for (CustomRouteLeg candidate : candidates) if (!sameRouteService(candidate, best)) alternatives.add(candidate.withoutAlternatives());
+            CustomRouteLeg updated = best.withAlternatives(alternatives);
+            runOnUiThread(() -> {
+                dismissSheet();
+                if (index >= 0 && index < customRoute.legs.size()) customRoute.legs.set(index, updated);
+                showCustomRouteEditor(customRoute);
+            });
+        });
+    }
     private int matchingStopIndex(List<Stop> stops, Stop target, int fromIndex) {
         for (int i = Math.max(0, fromIndex); i < stops.size(); i++) {
             Stop candidate = stops.get(i);
@@ -580,6 +697,33 @@ private int tab = 0;
         return -1;
     }
 
+    private void addUniqueLegCandidate(List<CustomRouteLeg> candidates, CustomRouteLeg candidate) {
+        for (CustomRouteLeg existing : candidates) if (sameRouteService(existing, candidate)) return;
+        candidates.add(candidate);
+    }
+
+    private boolean sameRouteService(CustomRouteLeg a, CustomRouteLeg b) {
+        if (a == null || b == null) return false;
+        return a.operator.equals(b.operator) && a.route.equals(b.route) && a.dir.equals(b.dir) && a.serviceType.equals(b.serviceType);
+    }
+
+    private int etaScore(CustomRouteLeg leg) {
+        try {
+            List<String> times = api.etas(leg.bookmark(), leg.startStop());
+            return etaScore(times.isEmpty() ? "" : times.get(0));
+        } catch (Exception e) {
+            return 9999;
+        }
+    }
+
+    private int etaScore(String label) {
+        if (label == null || label.length() == 0) return 9999;
+        String lower = label.toLowerCase(Locale.US);
+        if (lower.contains("due") || lower.contains("arriv")) return 0;
+        String digits = lower.replaceAll("[^0-9]", " ").trim();
+        if (digits.length() == 0) return 9999;
+        try { return Integer.parseInt(digits.split("\\s+")[0]); } catch (Exception e) { return 9999; }
+    }
     private String[] stopOptionLabels(List<Stop> stops) {
         String[] names = new String[Math.min(stops.size(), 120)];
         for (int i = 0; i < names.length; i++) names[i] = stops.get(i).seq + ". " + stops.get(i).name;
@@ -1675,7 +1819,7 @@ private int tab = 0;
             groupFab.setColorFilter(buttonText());
             groupFab.setBackground(round(floatingSurface(), dp(22), Color.TRANSPARENT));
         }
-        if (refreshThrobber != null && Build.VERSION.SDK_INT >= 21) refreshThrobber.setIndeterminateTintList(ColorStateList.valueOf(BLUE));
+        if (refreshPrompt != null) refreshPrompt.setBackground(round(elevatedSurface(), dp(18), tint(BLUE, 0.34f)));
     }
 
     private int appBackground() { return blend(BG, BLUE, 0.16f); }
@@ -1841,7 +1985,7 @@ private int tab = 0;
             case "Theme": return "\u4e3b\u984c";
             case "Use Background Image": return "\u4f7f\u7528\u80cc\u666f\u5716\u7247";
             case "Remove Background": return "\u79fb\u9664\u80cc\u666f";
-            case "Languages": return "\u8a9e\u8a00";
+            case "Language": return "\u8a9e\u8a00";
             case "About": return "\u95dc\u65bc";
             case "Menu": return "\u9078\u55ae";
             case "New Route": return "\u65b0\u589e\u8def\u7dda";
@@ -1865,6 +2009,12 @@ private int tab = 0;
             case "No bus routes added yet": return "\u5c1a\u672a\u52a0\u5165\u5df4\u58eb\u8def\u7dda";
             case "Add Bus Route": return "\u52a0\u5165\u5df4\u58eb\u8def\u7dda";
             case "Bus Route": return "\u5df4\u58eb\u8def\u7dda";
+            case "Direction": return "\u65b9\u5411";
+            case "Add Alternative Route": return "\u52a0\u5165\u66ff\u4ee3\u8def\u7dda";
+            case "Alternative Routes": return "\u66ff\u4ee3\u8def\u7dda";
+            case "Alt routes": return "\u66ff\u4ee3\u8def\u7dda";
+            case "Checking arrivals...": return "\u6b63\u5728\u6aa2\u67e5\u5230\u7ad9\u6642\u9593...";
+            case "Release to refresh": return "\u653e\u958b\u5373\u53ef\u91cd\u65b0\u6574\u7406";
             case "Remove Bus Route": return "\u79fb\u9664\u5df4\u58eb\u8def\u7dda";
             case "Add Bus Route Above": return "\u5728\u4e0a\u65b9\u52a0\u5165\u5df4\u58eb\u8def\u7dda";
             case "Add Bus Route Below": return "\u5728\u4e0b\u65b9\u52a0\u5165\u5df4\u58eb\u8def\u7dda";
@@ -1899,21 +2049,23 @@ private int tab = 0;
     private View refreshContainer(ScrollView scroll) {
         FrameLayout container = new FrameLayout(this);
         container.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
-        ProgressBar throbber = new ProgressBar(this);
-        throbber.setIndeterminate(true);
-        throbber.setAlpha(0f);
-        throbber.setTranslationY(-dp(36));
-        if (Build.VERSION.SDK_INT >= 21) throbber.setIndeterminateTintList(ColorStateList.valueOf(BLUE));
-        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(dp(32), dp(32), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        TextView prompt = text(t("Release to refresh"), 14, TEXT, true);
+        prompt.setGravity(Gravity.CENTER);
+        prompt.setPadding(dp(18), 0, dp(18), 0);
+        prompt.setAlpha(0f);
+        prompt.setTranslationY(-dp(36));
+        prompt.setSingleLine(true);
+        prompt.setBackground(round(elevatedSurface(), dp(18), tint(BLUE, 0.34f)));
+        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(-2, dp(36), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         tp.setMargins(0, dp(8), 0, 0);
-        container.addView(throbber, tp);
-        refreshThrobber = throbber;
-        if (scroll instanceof RefreshScrollView) ((RefreshScrollView) scroll).setRefreshThrobber(throbber);
+        container.addView(prompt, tp);
+        refreshPrompt = prompt;
+        if (scroll instanceof RefreshScrollView) ((RefreshScrollView) scroll).setRefreshPrompt(prompt);
         return container;
     }
 
     private class RefreshScrollView extends ScrollView {
-        private ProgressBar throbber;
+        private TextView prompt;
         private final int touchSlop;
         private float downX = -1f;
         private float downY = -1f;
@@ -1925,8 +2077,8 @@ private int tab = 0;
             touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
         }
 
-        void setRefreshThrobber(ProgressBar throbber) {
-            this.throbber = throbber;
+        void setRefreshPrompt(TextView prompt) {
+            this.prompt = prompt;
         }
 
         @Override
@@ -1947,7 +2099,7 @@ private int tab = 0;
                             float pull = Math.min(dp(72), dy / 3f);
                             if (pull > 0) {
                                 setTranslationY(pull);
-                                setRefreshThrobberPull(throbber, pull / (float) dp(72));
+                                setRefreshPromptPull(prompt, pull / (float) dp(72));
                             }
                         }
                     }
@@ -1959,10 +2111,10 @@ private int tab = 0;
                         animate().translationY(0).setDuration(180).setInterpolator(new DecelerateInterpolator()).start();
                         if (!triggered && pulled >= dp(42)) {
                             triggered = true;
-                            showRefreshThrobber(throbber);
+                            showRefreshPrompt(prompt);
                             refreshCurrentTab();
                         } else {
-                            hideRefreshThrobber(throbber);
+                            hideRefreshPrompt(prompt);
                         }
                     }
                     downX = -1f;
@@ -1974,24 +2126,24 @@ private int tab = 0;
         }
     }
 
-    private void setRefreshThrobberPull(ProgressBar throbber, float progress) {
-        if (throbber == null) return;
+    private void setRefreshPromptPull(TextView prompt, float progress) {
+        if (prompt == null) return;
         float p = Math.max(0f, Math.min(1f, progress));
-        throbber.animate().cancel();
-        throbber.setAlpha(p);
-        throbber.setTranslationY(-dp(36) + dp(36) * p);
+        prompt.animate().cancel();
+        prompt.setAlpha(p);
+        prompt.setTranslationY(-dp(36) + dp(36) * p);
     }
 
-    private void showRefreshThrobber(ProgressBar throbber) {
-        if (throbber == null) return;
-        throbber.animate().cancel();
-        throbber.animate().alpha(1f).translationY(0).setDuration(140).setInterpolator(new DecelerateInterpolator()).start();
-        throbber.postDelayed(() -> hideRefreshThrobber(throbber), 650);
+    private void showRefreshPrompt(TextView prompt) {
+        if (prompt == null) return;
+        prompt.animate().cancel();
+        prompt.animate().alpha(1f).translationY(0).setDuration(140).setInterpolator(new DecelerateInterpolator()).start();
+        prompt.postDelayed(() -> hideRefreshPrompt(prompt), 650);
     }
 
-    private void hideRefreshThrobber(ProgressBar throbber) {
-        if (throbber == null) return;
-        throbber.animate().alpha(0f).translationY(-dp(36)).setDuration(220).setInterpolator(new DecelerateInterpolator()).start();
+    private void hideRefreshPrompt(TextView prompt) {
+        if (prompt == null) return;
+        prompt.animate().alpha(0f).translationY(-dp(36)).setDuration(220).setInterpolator(new DecelerateInterpolator()).start();
     }
 
     private void refreshCurrentTab() {
@@ -2071,7 +2223,7 @@ private int tab = 0;
         keys.add("Theme");
         keys.add("Use Background Image");
         if (hasCustomBackground()) keys.add("Remove Background");
-        keys.add("Languages");
+        keys.add("Language");
         keys.add("About");
         String[] labels = new String[keys.size()];
         for (int i = 0; i < keys.size(); i++) labels[i] = t(keys.get(i));
@@ -2080,7 +2232,7 @@ private int tab = 0;
             if ("Theme".equals(key)) showThemeSheet();
             else if ("Use Background Image".equals(key)) pickCustomBackground();
             else if ("Remove Background".equals(key)) removeCustomBackground();
-            else if ("Languages".equals(key)) showLanguageSheet();
+            else if ("Language".equals(key)) showLanguageSheet();
             else if ("About".equals(key)) showAboutSheet();
         });
     }
@@ -2131,7 +2283,7 @@ private int tab = 0;
 
     private void showLanguageSheet() {
         String[] labels = {t("English"), t("Chinese")};
-        showOptionSheet(t("Languages"), labels, (index, label) -> {
+        showOptionSheet(t("Language"), labels, (index, label) -> {
             prefs.edit().putString("language", index == 1 ? "zh" : "en").apply();
             renderNav();
             showCurrentTab();
@@ -2404,6 +2556,8 @@ private int tab = 0;
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
+        scroll.setClipToPadding(false);
+        scroll.setPadding(0, 0, 0, dp(120));
         applyCardScrollFade(scroll);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
@@ -2489,6 +2643,8 @@ private int tab = 0;
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
+        scroll.setClipToPadding(false);
+        scroll.setPadding(0, 0, 0, dp(120));
         applyCardScrollFade(scroll);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
@@ -2555,6 +2711,8 @@ private int tab = 0;
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
+        scroll.setClipToPadding(false);
+        scroll.setPadding(0, 0, 0, dp(120));
         applyCardScrollFade(scroll);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
@@ -2963,29 +3121,50 @@ private int tab = 0;
         final String operator, route, dir, serviceType, from, to, startStopId, startName, endStopId, endName;
         final int startSeq, endSeq;
         final double startLat, startLon, endLat, endLon;
+        final List<CustomRouteLeg> alternatives;
         CustomRouteLeg(String operator, String route, String dir, String serviceType, String from, String to, String startStopId, String startName, int startSeq, double startLat, double startLon, String endStopId, String endName, int endSeq, double endLat, double endLon) {
+            this(operator, route, dir, serviceType, from, to, startStopId, startName, startSeq, startLat, startLon, endStopId, endName, endSeq, endLat, endLon, new ArrayList<>());
+        }
+        CustomRouteLeg(String operator, String route, String dir, String serviceType, String from, String to, String startStopId, String startName, int startSeq, double startLat, double startLon, String endStopId, String endName, int endSeq, double endLat, double endLon, List<CustomRouteLeg> alternatives) {
             this.operator = operator; this.route = route; this.dir = dir; this.serviceType = serviceType; this.from = clean(from); this.to = clean(to);
             this.startStopId = clean(startStopId); this.startName = clean(startName); this.startSeq = startSeq; this.startLat = startLat; this.startLon = startLon;
             this.endStopId = clean(endStopId); this.endName = clean(endName); this.endSeq = endSeq; this.endLat = endLat; this.endLon = endLon;
+            this.alternatives = alternatives == null ? new ArrayList<>() : alternatives;
         }
         Bookmark bookmark() { return new Bookmark(operator, route, dir, serviceType, from, to, "Ungrouped"); }
         Stop startStop() { return new Stop(startStopId, startName, startSeq, startLat, startLon); }
         Stop endStop() { return new Stop(endStopId, endName, endSeq, endLat, endLon); }
+        CustomRouteLeg withoutAlternatives() { return withAlternatives(new ArrayList<>()); }
+        CustomRouteLeg withAlternatives(List<CustomRouteLeg> nextAlternatives) {
+            return new CustomRouteLeg(operator, route, dir, serviceType, from, to, startStopId, startName, startSeq, startLat, startLon, endStopId, endName, endSeq, endLat, endLon, nextAlternatives);
+        }
         JSONObject toJson() throws Exception {
             JSONObject o = new JSONObject();
             o.put("operator", operator); o.put("route", route); o.put("dir", dir); o.put("serviceType", serviceType); o.put("from", from); o.put("to", to);
             o.put("startStopId", startStopId); o.put("startName", startName); o.put("startSeq", startSeq); o.put("startLat", startLat); o.put("startLon", startLon);
             o.put("endStopId", endStopId); o.put("endName", endName); o.put("endSeq", endSeq); o.put("endLat", endLat); o.put("endLon", endLon);
+            if (!alternatives.isEmpty()) {
+                JSONArray arr = new JSONArray();
+                for (CustomRouteLeg alternative : alternatives) arr.put(alternative.withoutAlternatives().toJson());
+                o.put("alternatives", arr);
+            }
             return o;
         }
         static CustomRouteLeg fromJson(JSONObject o) {
             try {
-                return new CustomRouteLeg(o.optString("operator"), o.optString("route"), o.optString("dir", "outbound"), o.optString("serviceType", "1"), o.optString("from"), o.optString("to"), o.optString("startStopId"), o.optString("startName"), o.optInt("startSeq", 0), o.optDouble("startLat", 0), o.optDouble("startLon", 0), o.optString("endStopId"), o.optString("endName"), o.optInt("endSeq", 0), o.optDouble("endLat", 0), o.optDouble("endLon", 0));
+                List<CustomRouteLeg> alternatives = new ArrayList<>();
+                JSONArray arr = o.optJSONArray("alternatives");
+                if (arr != null) {
+                    for (int i = 0; i < arr.length(); i++) {
+                        CustomRouteLeg alt = CustomRouteLeg.fromJson(arr.getJSONObject(i));
+                        if (alt != null) alternatives.add(alt.withoutAlternatives());
+                    }
+                }
+                return new CustomRouteLeg(o.optString("operator"), o.optString("route"), o.optString("dir", "outbound"), o.optString("serviceType", "1"), o.optString("from"), o.optString("to"), o.optString("startStopId"), o.optString("startName"), o.optInt("startSeq", 0), o.optDouble("startLat", 0), o.optDouble("startLon", 0), o.optString("endStopId"), o.optString("endName"), o.optInt("endSeq", 0), o.optDouble("endLat", 0), o.optDouble("endLon", 0), alternatives);
             } catch (Exception e) { return null; }
         }
         static String clean(String value) { return value == null ? "" : value.replace("|", " "); }
     }
-
     static class Bookmark {
         final String operator, route, dir, serviceType, from, to, group;
         Bookmark(String operator, String route, String dir, String serviceType, String from, String to, String group) {
@@ -3360,3 +3539,4 @@ private int tab = 0;
         }
     }
 }
+
