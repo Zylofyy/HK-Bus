@@ -185,15 +185,6 @@ private int tab = 0;
         mp.setMargins(0, dp(34), dp(18), 0);
         root.addView(topMenu, mp);
 
-        refreshThrobber = new ProgressBar(this);
-        refreshThrobber.setIndeterminate(true);
-        refreshThrobber.setAlpha(0f);
-        refreshThrobber.setTranslationY(-dp(42));
-        if (Build.VERSION.SDK_INT >= 21) refreshThrobber.setIndeterminateTintList(ColorStateList.valueOf(BLUE));
-        FrameLayout.LayoutParams rp = new FrameLayout.LayoutParams(dp(34), dp(34), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-        rp.setMargins(0, dp(42), 0, 0);
-        root.addView(refreshThrobber, rp);
-
         navIsland = new FrameLayout(this);
         nav = new LinearLayout(this);
         nav.setGravity(Gravity.CENTER);
@@ -266,13 +257,12 @@ private int tab = 0;
 
         ScrollView scroll = new ScrollView(this);
         applyCardScrollFade(scroll);
-        attachPullToRefresh(scroll);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, 0, 1);
         lp.setMargins(0, dp(16), 0, 0);
-        content.addView(scroll, lp);
+        content.addView(refreshContainer(scroll), lp);
 
         List<CustomRoute> customRoutes = getCustomRoutes();
         if (customRoutes.isEmpty()) {
@@ -972,11 +962,10 @@ private int tab = 0;
 
         ScrollView scroll = new ScrollView(this);
         applyCardScrollFade(scroll);
-        attachPullToRefresh(scroll);
         LinearLayout results = new LinearLayout(this);
         results.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(results);
-        content.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        content.addView(refreshContainer(scroll), new LinearLayout.LayoutParams(-1, 0, 1));
 
         Runnable redraw = () -> renderSearchResults(results, search.getText().toString());
         search.addTextChangedListener(new TextWatcher() {
@@ -1044,13 +1033,12 @@ private int tab = 0;
 
         ScrollView scroll = new ScrollView(this);
         applyCardScrollFade(scroll);
-        attachPullToRefresh(scroll);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, 0, 1);
         lp.setMargins(0, dp(14), 0, 0);
-        content.addView(scroll, lp);
+        content.addView(refreshContainer(scroll), lp);
 
         List<Bookmark> marks = getBookmarks();
         if (marks.isEmpty()) {
@@ -1907,7 +1895,23 @@ private int tab = 0;
         }
     }
 
-    private void attachPullToRefresh(ScrollView scroll) {
+    private View refreshContainer(ScrollView scroll) {
+        FrameLayout container = new FrameLayout(this);
+        container.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        ProgressBar throbber = new ProgressBar(this);
+        throbber.setIndeterminate(true);
+        throbber.setAlpha(0f);
+        throbber.setTranslationY(-dp(36));
+        if (Build.VERSION.SDK_INT >= 21) throbber.setIndeterminateTintList(ColorStateList.valueOf(BLUE));
+        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(dp(32), dp(32), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        tp.setMargins(0, dp(8), 0, 0);
+        container.addView(throbber, tp);
+        refreshThrobber = throbber;
+        attachPullToRefresh(scroll, throbber);
+        return container;
+    }
+
+    private void attachPullToRefresh(ScrollView scroll, ProgressBar throbber) {
         scroll.setOnTouchListener((v, event) -> {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
@@ -1920,7 +1924,7 @@ private int tab = 0;
                         if (delta > 0) {
                             float pull = Math.min(dp(72), delta / 3f);
                             scroll.setTranslationY(pull);
-                            setRefreshThrobberPull(pull / (float) dp(72));
+                            setRefreshThrobberPull(throbber, pull / (float) dp(72));
                         }
                     }
                     return false;
@@ -1930,10 +1934,10 @@ private int tab = 0;
                     scroll.animate().translationY(0).setDuration(180).setInterpolator(new DecelerateInterpolator()).start();
                     if (!refreshTriggered && pulled >= dp(42)) {
                         refreshTriggered = true;
-                        showRefreshThrobber();
+                        showRefreshThrobber(throbber);
                         refreshCurrentTab();
                     } else {
-                        hideRefreshThrobber();
+                        hideRefreshThrobber(throbber);
                     }
                     refreshDownY = -1f;
                     return false;
@@ -1943,24 +1947,24 @@ private int tab = 0;
         });
     }
 
-    private void setRefreshThrobberPull(float progress) {
-        if (refreshThrobber == null) return;
+    private void setRefreshThrobberPull(ProgressBar throbber, float progress) {
+        if (throbber == null) return;
         float p = Math.max(0f, Math.min(1f, progress));
-        refreshThrobber.animate().cancel();
-        refreshThrobber.setAlpha(p);
-        refreshThrobber.setTranslationY(-dp(42) + dp(42) * p);
+        throbber.animate().cancel();
+        throbber.setAlpha(p);
+        throbber.setTranslationY(-dp(36) + dp(36) * p);
     }
 
-    private void showRefreshThrobber() {
-        if (refreshThrobber == null) return;
-        refreshThrobber.animate().cancel();
-        refreshThrobber.animate().alpha(1f).translationY(0).setDuration(140).setInterpolator(new DecelerateInterpolator()).start();
-        refreshThrobber.postDelayed(() -> hideRefreshThrobber(), 650);
+    private void showRefreshThrobber(ProgressBar throbber) {
+        if (throbber == null) return;
+        throbber.animate().cancel();
+        throbber.animate().alpha(1f).translationY(0).setDuration(140).setInterpolator(new DecelerateInterpolator()).start();
+        throbber.postDelayed(() -> hideRefreshThrobber(throbber), 650);
     }
 
-    private void hideRefreshThrobber() {
-        if (refreshThrobber == null) return;
-        refreshThrobber.animate().alpha(0f).translationY(-dp(42)).setDuration(220).setInterpolator(new DecelerateInterpolator()).start();
+    private void hideRefreshThrobber(ProgressBar throbber) {
+        if (throbber == null) return;
+        throbber.animate().alpha(0f).translationY(-dp(36)).setDuration(220).setInterpolator(new DecelerateInterpolator()).start();
     }
 
     private void refreshCurrentTab() {
