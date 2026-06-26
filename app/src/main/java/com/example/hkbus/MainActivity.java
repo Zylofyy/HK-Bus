@@ -33,6 +33,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewConfiguration;
 import android.view.WindowInsets;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
@@ -255,7 +256,7 @@ private int tab = 0;
         content.addView(pageTitle(t("Routes")));
         content.addView(text(t("Build named journeys from chained bus route cards."), 15, MUTED, false));
 
-        ScrollView scroll = new ScrollView(this);
+        ScrollView scroll = new RefreshScrollView(this);
         applyCardScrollFade(scroll);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
@@ -960,7 +961,7 @@ private int tab = 0;
         sp.setMargins(0, dp(18), 0, dp(12));
         content.addView(search, sp);
 
-        ScrollView scroll = new ScrollView(this);
+        ScrollView scroll = new RefreshScrollView(this);
         applyCardScrollFade(scroll);
         LinearLayout results = new LinearLayout(this);
         results.setOrientation(LinearLayout.VERTICAL);
@@ -1031,7 +1032,7 @@ private int tab = 0;
         content.addView(text(t("Nearest stop is selected from your current GPS position."), 15, MUTED, false));
         content.addView(groupControls());
 
-        ScrollView scroll = new ScrollView(this);
+        ScrollView scroll = new RefreshScrollView(this);
         applyCardScrollFade(scroll);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
@@ -1907,44 +1908,70 @@ private int tab = 0;
         tp.setMargins(0, dp(8), 0, 0);
         container.addView(throbber, tp);
         refreshThrobber = throbber;
-        attachPullToRefresh(scroll, throbber);
+        if (scroll instanceof RefreshScrollView) ((RefreshScrollView) scroll).setRefreshThrobber(throbber);
         return container;
     }
 
-    private void attachPullToRefresh(ScrollView scroll, ProgressBar throbber) {
-        scroll.setOnTouchListener((v, event) -> {
+    private class RefreshScrollView extends ScrollView {
+        private ProgressBar throbber;
+        private final int touchSlop;
+        private float downX = -1f;
+        private float downY = -1f;
+        private boolean pulling = false;
+        private boolean triggered = false;
+
+        RefreshScrollView(Context context) {
+            super(context);
+            touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+        }
+
+        void setRefreshThrobber(ProgressBar throbber) {
+            this.throbber = throbber;
+        }
+
+        @Override
+        public boolean dispatchTouchEvent(MotionEvent event) {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
-                    refreshDownY = event.getRawY();
-                    refreshTriggered = false;
-                    return false;
+                    downX = event.getRawX();
+                    downY = event.getRawY();
+                    pulling = false;
+                    triggered = false;
+                    break;
                 case MotionEvent.ACTION_MOVE:
-                    if (scroll.getScrollY() <= 0 && refreshDownY >= 0) {
-                        float delta = event.getRawY() - refreshDownY;
-                        if (delta > 0) {
-                            float pull = Math.min(dp(72), delta / 3f);
-                            scroll.setTranslationY(pull);
-                            setRefreshThrobberPull(throbber, pull / (float) dp(72));
+                    if (getScrollY() <= 0 && downY >= 0) {
+                        float dx = Math.abs(event.getRawX() - downX);
+                        float dy = event.getRawY() - downY;
+                        if (dy > touchSlop && dy > dx * 1.2f) pulling = true;
+                        if (pulling) {
+                            float pull = Math.min(dp(72), dy / 3f);
+                            if (pull > 0) {
+                                setTranslationY(pull);
+                                setRefreshThrobberPull(throbber, pull / (float) dp(72));
+                            }
                         }
                     }
-                    return false;
+                    break;
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
-                    float pulled = scroll.getTranslationY();
-                    scroll.animate().translationY(0).setDuration(180).setInterpolator(new DecelerateInterpolator()).start();
-                    if (!refreshTriggered && pulled >= dp(42)) {
-                        refreshTriggered = true;
-                        showRefreshThrobber(throbber);
-                        refreshCurrentTab();
-                    } else {
-                        hideRefreshThrobber(throbber);
+                    float pulled = getTranslationY();
+                    if (pulling || pulled > 0) {
+                        animate().translationY(0).setDuration(180).setInterpolator(new DecelerateInterpolator()).start();
+                        if (!triggered && pulled >= dp(42)) {
+                            triggered = true;
+                            showRefreshThrobber(throbber);
+                            refreshCurrentTab();
+                        } else {
+                            hideRefreshThrobber(throbber);
+                        }
                     }
-                    refreshDownY = -1f;
-                    return false;
-                default:
-                    return false;
+                    downX = -1f;
+                    downY = -1f;
+                    pulling = false;
+                    break;
             }
-        });
+            return super.dispatchTouchEvent(event);
+        }
     }
 
     private void setRefreshThrobberPull(ProgressBar throbber, float progress) {
