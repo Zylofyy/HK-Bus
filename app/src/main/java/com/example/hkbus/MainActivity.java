@@ -1867,6 +1867,12 @@ private int tab = 0;
         }
     }
 
+    private void applyPickerScrollFade(ScrollView scroll) {
+        scroll.setVerticalFadingEdgeEnabled(true);
+        scroll.setFadingEdgeLength(dp(18));
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+    }
+
     private void setFabForScroll(boolean visible) {
         if (groupFab == null || groupFab.getVisibility() == View.GONE || !groupFab.isEnabled()) return;
         groupFab.animate().cancel();
@@ -2566,8 +2572,8 @@ private int tab = 0;
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
         scroll.setClipToPadding(false);
-        scroll.setPadding(0, 0, 0, dp(120));
-        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        scroll.setPadding(0, 0, 0, 0);
+        applyPickerScrollFade(scroll);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list);
@@ -2653,8 +2659,8 @@ private int tab = 0;
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
         scroll.setClipToPadding(false);
-        scroll.setPadding(0, 0, 0, dp(120));
-        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        scroll.setPadding(0, 0, 0, 0);
+        applyPickerScrollFade(scroll);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list);
@@ -2721,8 +2727,8 @@ private int tab = 0;
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
         scroll.setClipToPadding(false);
-        scroll.setPadding(0, 0, 0, dp(120));
-        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        scroll.setPadding(0, 0, 0, 0);
+        applyPickerScrollFade(scroll);
         LinearLayout list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(list);
@@ -3549,6 +3555,7 @@ private int tab = 0;
         }
     }
 }
+
 
 
 
