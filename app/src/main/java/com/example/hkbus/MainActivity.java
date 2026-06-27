@@ -203,7 +203,7 @@ public class MainActivity extends Activity {
             else showCreateGroupDialog(null);
         });
         FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(dp(72), dp(72), Gravity.BOTTOM | Gravity.RIGHT);
-        fp.setMargins(0, 0, dp(14), dp(130));
+        fp.setMargins(0, 0, dp(20), dp(136));
         root.addView(groupFab, fp);
 
         applyThemeSurfaces();
@@ -1835,6 +1835,10 @@ public class MainActivity extends Activity {
 
     private int appBackground() { return blend(BG, BLUE, 0.16f); }
     private int surface() { return blend(Color.rgb(18, 21, 30), BLUE, 0.13f); }
+    private int cardSurface() {
+        int base = surface();
+        return hasCustomBackground() ? Color.argb(205, Color.red(base), Color.green(base), Color.blue(base)) : base;
+    }
     private int elevatedSurface() { return blend(Color.rgb(27, 31, 42), BLUE, 0.17f); }
     private int fieldSurface() { return blend(Color.rgb(14, 18, 27), BLUE, 0.12f); }
     private int sheetSurface() { return blend(Color.rgb(24, 28, 38), BLUE, 0.18f); }
@@ -2168,6 +2172,7 @@ public class MainActivity extends Activity {
         private float downY = -1f;
         private boolean pulling = false;
         private boolean triggered = false;
+        private boolean childTouchCancelled = false;
 
         RefreshScrollView(Context context) {
             super(context);
@@ -2186,12 +2191,16 @@ public class MainActivity extends Activity {
                     downY = event.getRawY();
                     pulling = false;
                     triggered = false;
+                    childTouchCancelled = false;
                     break;
                 case MotionEvent.ACTION_MOVE:
                     if (getScrollY() <= 0 && downY >= 0) {
                         float dx = Math.abs(event.getRawX() - downX);
                         float dy = event.getRawY() - downY;
-                        if (dy > touchSlop && dy > dx * 1.2f) pulling = true;
+                        if (dy > touchSlop && dy > dx * 1.2f) {
+                            pulling = true;
+                            cancelChildTouch(event);
+                        }
                         if (pulling) {
                             float pull = Math.min(dp(72), dy / 3f);
                             if (pull > 0) {
@@ -2223,6 +2232,15 @@ public class MainActivity extends Activity {
                     break;
             }
             return super.dispatchTouchEvent(event);
+        }
+
+        private void cancelChildTouch(MotionEvent source) {
+            if (childTouchCancelled) return;
+            childTouchCancelled = true;
+            MotionEvent cancel = MotionEvent.obtain(source);
+            cancel.setAction(MotionEvent.ACTION_CANCEL);
+            super.dispatchTouchEvent(cancel);
+            cancel.recycle();
         }
     }
 
@@ -2368,6 +2386,7 @@ public class MainActivity extends Activity {
         String uri = prefs.getString("customBackgroundUri", "");
         if (uri.length() == 0) {
             backgroundImage.setImageDrawable(null);
+            if (Build.VERSION.SDK_INT >= 31) backgroundImage.setRenderEffect(null);
             backgroundImage.setVisibility(View.GONE);
             return;
         }
@@ -2375,7 +2394,11 @@ public class MainActivity extends Activity {
             backgroundImage.setImageURI(Uri.parse(uri));
             backgroundImage.setVisibility(View.VISIBLE);
             backgroundImage.setAlpha(0.42f);
+            if (Build.VERSION.SDK_INT >= 31) {
+                backgroundImage.setRenderEffect(RenderEffect.createBlurEffect(dp(10), dp(10), android.graphics.Shader.TileMode.CLAMP));
+            }
         } catch (Exception e) {
+            if (Build.VERSION.SDK_INT >= 31) backgroundImage.setRenderEffect(null);
             backgroundImage.setVisibility(View.GONE);
         }
     }
@@ -3053,7 +3076,7 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(18), dp(16), dp(18), dp(16));
-        box.setBackground(round(surface(), dp(28), outline()));
+        box.setBackground(round(cardSurface(), dp(28), outline()));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.setMargins(0, 0, 0, dp(12));
         box.setLayoutParams(lp);
