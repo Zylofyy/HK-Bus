@@ -13,6 +13,8 @@ import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.RenderEffect;
@@ -98,6 +100,7 @@ public class MainActivity extends Activity {
     private FrameLayout navIsland;
     private LinearLayout nav;
     private FrameLayout sheetOverlay;
+    private ImageView sheetBlurLayer;
     private ImageButton groupFab;
     private ImageButton topMenu;
     private ImageView backgroundImage;
@@ -121,6 +124,7 @@ public class MainActivity extends Activity {
     private Location lastLocation;
     private String selectedGroup = "All";
     private boolean groupOrderMode = false;
+    private boolean groupFabScrollVisible = true;
     private float refreshDownY = -1f;
     private boolean refreshTriggered = false;
 
@@ -412,7 +416,16 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
         sp.setMargins(0, dp(10), 0, 0);
         wrap.addView(routeEndsView(leg.startName, leg.endName), sp);
+        TextView altPill = null;
+        if (!leg.alternatives.isEmpty()) {
+            View alt = alternativeRoutesView(leg.alternatives);
+            altPill = alternativeRoutesPill(alt);
+            LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2);
+            ap.setMargins(0, dp(10), 0, 0);
+            wrap.addView(alt, ap);
+        }
         loadFirstEtaInto(leg, eta);
+        loadBestLegSummaryInto(leg, route, eta, altPill);
         return wrap;
     }
 
@@ -421,8 +434,13 @@ public class MainActivity extends Activity {
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         String title = editPage ? leg.route + "  " + opName(leg.operator) : leg.route;
-        header.addView(text(title, 22, TEXT, true), new LinearLayout.LayoutParams(0, -2, 1));
-        if (!editPage) header.addView(groupPill(opName(leg.operator)));
+        TextView routeTitle = text(title, 22, TEXT, true);
+        header.addView(routeTitle, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView operatorPill = null;
+        if (!editPage) {
+            operatorPill = groupPill(opName(leg.operator));
+            header.addView(operatorPill);
+        }
         box.addView(header);
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
         sp.setMargins(0, dp(12), 0, dp(10));
@@ -438,24 +456,45 @@ public class MainActivity extends Activity {
         LinearLayout etaRow = etaBoxRow(null);
         box.addView(etaRow);
         loadEtaRowInto(leg.bookmark(), leg.startStop(), etaRow);
+        TextView altPill = null;
         if (!leg.alternatives.isEmpty()) {
-            LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, dp(52));
+            View alt = alternativeRoutesView(leg.alternatives);
+            altPill = alternativeRoutesPill(alt);
+            LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(-1, -2);
             ap.setMargins(0, dp(10), 0, 0);
-            box.addView(alternativeRoutesView(leg.alternatives), ap);
+            box.addView(alt, ap);
         }
+        loadBestLegCardInto(leg, editPage, routeTitle, operatorPill, etaStop, etaRow, altPill);
         return box;
     }
 
     private View alternativeRoutesView(List<CustomRouteLeg> alternatives) {
-        TextView pill = text(t("Alt routes") + ": " + alternativeRouteNames(alternatives), 15, TEXT, true);
+        LinearLayout wrap = new LinearLayout(this);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        TextView label = text(t("Alt routes"), 13, MUTED, false);
+        label.setSingleLine(true);
+        label.setEllipsize(TextUtils.TruncateAt.END);
+        wrap.addView(label);
+        TextView pill = text(alternativeRouteNames(alternatives), 15, TEXT, true);
         pill.setGravity(Gravity.CENTER_VERTICAL);
         pill.setSingleLine(true);
         pill.setEllipsize(TextUtils.TruncateAt.END);
         pill.setPadding(dp(18), 0, dp(18), 0);
         pill.setBackground(round(elevatedSurface(), dp(24), outline()));
-        return pill;
+        pill.setTag("altRoutesPill");
+        LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(-1, dp(52));
+        pp.setMargins(0, dp(4), 0, 0);
+        wrap.addView(pill, pp);
+        return wrap;
     }
 
+    private TextView alternativeRoutesPill(View view) {
+        if (view instanceof LinearLayout) {
+            LinearLayout wrap = (LinearLayout) view;
+            if (wrap.getChildCount() > 1 && wrap.getChildAt(1) instanceof TextView) return (TextView) wrap.getChildAt(1);
+        }
+        return null;
+    }
     private String alternativeRouteNames(List<CustomRouteLeg> alternatives) {
         List<String> names = new ArrayList<>();
         for (CustomRouteLeg leg : alternatives) {
@@ -730,7 +769,7 @@ public class MainActivity extends Activity {
     private int etaScore(String label) {
         if (label == null || label.length() == 0) return 9999;
         String lower = label.toLowerCase(Locale.US);
-        if (lower.contains("due") || lower.contains("arriv")) return 0;
+        if (lower.contains("due") || lower.contains("arriv") || label.contains("\u5373\u5c07")) return 0;
         String digits = lower.replaceAll("[^0-9]", " ").trim();
         if (digits.length() == 0) return 9999;
         try { return Integer.parseInt(digits.split("\\s+")[0]); } catch (Exception e) { return 9999; }
@@ -1026,6 +1065,73 @@ public class MainActivity extends Activity {
         return out[0];
     }
 
+    private List<CustomRouteLeg> legCandidates(CustomRouteLeg leg) {
+        List<CustomRouteLeg> candidates = new ArrayList<>();
+        addUniqueLegCandidate(candidates, leg.withoutAlternatives());
+        for (CustomRouteLeg alternative : leg.alternatives) addUniqueLegCandidate(candidates, alternative.withoutAlternatives());
+        return candidates;
+    }
+
+    private CustomRouteLeg bestLiveLeg(CustomRouteLeg leg) {
+        List<CustomRouteLeg> candidates = legCandidates(leg);
+        if (candidates.isEmpty()) return leg;
+        CustomRouteLeg best = candidates.get(0);
+        int bestScore = etaScore(best);
+        for (int i = 1; i < candidates.size(); i++) {
+            CustomRouteLeg candidate = candidates.get(i);
+            int score = etaScore(candidate);
+            if (score < bestScore) {
+                best = candidate;
+                bestScore = score;
+            }
+        }
+        List<CustomRouteLeg> alternatives = new ArrayList<>();
+        for (CustomRouteLeg candidate : candidates) if (!sameRouteService(candidate, best)) alternatives.add(candidate.withoutAlternatives());
+        return best.withAlternatives(alternatives);
+    }
+
+    private void loadBestLegSummaryInto(CustomRouteLeg leg, TextView route, TextView eta, TextView altPill) {
+        if (leg.alternatives.isEmpty()) return;
+        io.execute(() -> {
+            CustomRouteLeg best = bestLiveLeg(leg);
+            try {
+                List<String> times = api.etas(best.bookmark(), best.startStop());
+                String label = times.isEmpty() ? "No data" : times.get(0);
+                runOnUiThread(() -> {
+                    route.setText(best.route);
+                    eta.setText(label);
+                    eta.setTextColor(times.isEmpty() ? MUTED : GREEN);
+                    if (altPill != null) altPill.setText(alternativeRouteNames(best.alternatives));
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    route.setText(best.route);
+                    if (altPill != null) altPill.setText(alternativeRouteNames(best.alternatives));
+                });
+            }
+        });
+    }
+
+    private void loadBestLegCardInto(CustomRouteLeg leg, boolean editPage, TextView routeTitle, TextView operatorPill, TextView etaStop, LinearLayout etaRow, TextView altPill) {
+        if (leg.alternatives.isEmpty()) return;
+        io.execute(() -> {
+            CustomRouteLeg best = bestLiveLeg(leg);
+            List<String> times;
+            try {
+                times = api.etas(best.bookmark(), best.startStop());
+            } catch (Exception e) {
+                times = new ArrayList<>();
+            }
+            List<String> finalTimes = times;
+            runOnUiThread(() -> {
+                routeTitle.setText(editPage ? best.route + "  " + opName(best.operator) : best.route);
+                if (operatorPill != null) operatorPill.setText(opName(best.operator));
+                etaStop.setText(best.startName);
+                renderEtaBoxes(etaRow, finalTimes);
+                if (altPill != null) altPill.setText(alternativeRouteNames(best.alternatives));
+            });
+        });
+    }
     private void loadFirstEtaInto(CustomRouteLeg leg, TextView target) {
         io.execute(() -> {
             try {
@@ -1844,7 +1950,7 @@ public class MainActivity extends Activity {
     private int sheetSurface() { return blend(Color.rgb(24, 28, 38), BLUE, 0.18f); }
     private int menuSheetSurface() {
         int base = sheetSurface();
-        return Color.argb(222, Color.red(base), Color.green(base), Color.blue(base));
+        return Color.argb(214, Color.red(base), Color.green(base), Color.blue(base));
     }
     private int outline() { return blend(STROKE, BLUE, 0.28f); }
     private int navSurface() { return blend(Color.rgb(16, 20, 29), BLUE, 0.36f); }
@@ -1875,6 +1981,25 @@ public class MainActivity extends Activity {
                 else if (sy < oy) setFabForScroll(true);
             });
         }
+        scroll.setOnTouchListener(new View.OnTouchListener() {
+            private float lastY;
+            @Override public boolean onTouch(View v, MotionEvent event) {
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        lastY = event.getRawY();
+                        break;
+                    case MotionEvent.ACTION_MOVE:
+                        float y = event.getRawY();
+                        float dy = y - lastY;
+                        if (Math.abs(dy) > touchSlopForFab()) {
+                            setFabForScroll(dy < 0);
+                            lastY = y;
+                        }
+                        break;
+                }
+                return false;
+            }
+        });
     }
 
     private void applyPickerScrollFade(ScrollView scroll) {
@@ -1912,6 +2037,8 @@ public class MainActivity extends Activity {
     }
     private void setFabForScroll(boolean visible) {
         if (groupFab == null || groupFab.getVisibility() == View.GONE || !groupFab.isEnabled()) return;
+        if (groupFabScrollVisible == visible) return;
+        groupFabScrollVisible = visible;
         groupFab.animate().cancel();
         if (visible) {
             groupFab.setVisibility(View.VISIBLE);
@@ -1931,10 +2058,13 @@ public class MainActivity extends Activity {
                     .translationY(dp(24))
                     .setDuration(190)
                     .setInterpolator(new DecelerateInterpolator())
-                    .withEndAction(() -> groupFab.setVisibility(View.INVISIBLE))
+                    .withEndAction(() -> {
+                        if (!groupFabScrollVisible) groupFab.setVisibility(View.INVISIBLE);
+                    })
                     .start();
         }
     }
+
     private ImageButton themedImageButton(int iconRes, int fill, int iconColor, int stroke, int radius) {
         ImageButton b = new ImageButton(this);
         b.setImageResource(iconRes);
@@ -2113,65 +2243,65 @@ public class MainActivity extends Activity {
             case "Current version: ": return "\u76ee\u524d\u7248\u672c\uff1a";
             case "Download and install": return "\u4e0b\u8f09\u4e26\u5b89\u88dd";
             case "Update Available": return "\u6709\u53ef\u7528\u66f4\u65b0";
-            case "Follow System": return "跟隨系統";
-            case "Blue": return "藍色";
-            case "Teal": return "藍綠色";
-            case "Green": return "綠色";
-            case "Orange": return "橙色";
-            case "Pink": return "粉紅色";
-            case "Purple": return "紫色";
-            case "Gray": return "灰色";
-            case "Refreshing": return "正在重新整理";
-            case "Stops": return "車站";
-            case "Loading Stops": return "正在載入車站";
-            case "Loading bus stops...": return "正在載入巴士站...";
-            case "No routes in": return "沒有路線於";
-            case "Routes are still loading.": return "路線仍在載入中。";
-            case "Could not load stops: ": return "未能載入車站：";
-            case "Could not generate route: ": return "未能產生路線：";
-            case "No bus path was found between those stops.": return "找不到連接這兩個車站的巴士路線。";
-            case "Finding Route": return "正在尋找路線";
-            case "Finding route...": return "正在尋找路線...";
-            case "Selected bus route does not stop at the previous terminal stop.": return "所選巴士路線不停靠上一段的終點站。";
-            case "Selected bus route cannot connect to the next starting stop.": return "所選巴士路線無法連接下一段的起點站。";
-            case "Terminal stop must come after the starting stop.": return "終點站必須位於起點站之後。";
-            case "Selected route must stop at the same starting and terminal stops.": return "所選路線必須停靠相同的起點站和終點站。";
-            case "Search for a route and save it here.": return "搜尋路線並儲存在此。";
-            case "No saved routes yet": return "尚未儲存路線";
-            case "Create Group": return "建立群組";
-            case "New Group": return "新增群組";
-            case "Group name": return "群組名稱";
-            case "Rename Group": return "重新命名群組";
-            case "Delete Group": return "刪除群組";
-            case "Delete Bookmark": return "刪除收藏";
-            case "Delete Route": return "刪除路線";
-            case "Rename Route": return "重新命名路線";
-            case "Group Color": return "群組顏色";
-            case "Move": return "移動";
-            case "Move to Group": return "移動至群組";
-            case "Ungrouped": return "未分組";
-            case "All": return "全部";
-            case "Nearest": return "最近";
-            case "Due": return "即將到站";
-            case "No data": return "沒有資料";
-            case "Checking for updates...": return "正在檢查更新...";
-            case "Latest GitHub release has no APK asset.": return "最新 GitHub 發佈沒有 APK 檔案。";
-            case "You are already on the latest release: ": return "已是最新版本：";
-            case "New release found: ": return "找到新版本：";
-            case "Download failed. ": return "下載失敗。";
-            case "Opening installer...": return "正在開啟安裝程式...";
-            case "Enable Live Updates": return "啟用 Live Updates";
-            case "Open Live Update Settings": return "開啟 Live Updates 設定";
-            case "Enable Live Updates for HK Bus so tracking can appear as an Android 16 live update instead of a regular notification.": return "為 HK Bus 啟用 Live Updates，讓追蹤以 Android 16 Live Update 顯示，而不是一般通知。";
-            case "Starting Bus Stop": return "起點巴士站";
-            case "Ending Bus Stop": return "終點巴士站";
-            case "Create Route": return "建立路線";
-            case "Searching shortest bus path": return "正在搜尋最短巴士路徑";
-            case "Route API failed: ": return "路線 API 失敗：";
-            case "Remove this bus route from the journey?": return "從行程中移除此巴士路線？";
-            case "Android download manager failed.": return "Android 下載管理員失敗。";
-            case "Timed out waiting for download.": return "等待下載逾時。";
-            case "Route": return "路線";
+            case "Follow System": return "è·Ÿéš¨ç³»çµ±";
+            case "Blue": return "è—è‰²";
+            case "Teal": return "è—ç¶ è‰²";
+            case "Green": return "ç¶ è‰²";
+            case "Orange": return "æ©™è‰²";
+            case "Pink": return "ç²‰ç´…è‰²";
+            case "Purple": return "ç´«è‰²";
+            case "Gray": return "ç°è‰²";
+            case "Refreshing": return "æ­£åœ¨é‡æ–°æ•´ç†";
+            case "Stops": return "è»Šç«™";
+            case "Loading Stops": return "æ­£åœ¨è¼‰å…¥è»Šç«™";
+            case "Loading bus stops...": return "æ­£åœ¨è¼‰å…¥å·´å£«ç«™...";
+            case "No routes in": return "æ²’æœ‰è·¯ç·šæ–¼";
+            case "Routes are still loading.": return "è·¯ç·šä»åœ¨è¼‰å…¥ä¸­ã€‚";
+            case "Could not load stops: ": return "æœªèƒ½è¼‰å…¥è»Šç«™ï¼š";
+            case "Could not generate route: ": return "æœªèƒ½ç”¢ç”Ÿè·¯ç·šï¼š";
+            case "No bus path was found between those stops.": return "æ‰¾ä¸åˆ°é€£æŽ¥é€™å…©å€‹è»Šç«™çš„å·´å£«è·¯ç·šã€‚";
+            case "Finding Route": return "æ­£åœ¨å°‹æ‰¾è·¯ç·š";
+            case "Finding route...": return "æ­£åœ¨å°‹æ‰¾è·¯ç·š...";
+            case "Selected bus route does not stop at the previous terminal stop.": return "æ‰€é¸å·´å£«è·¯ç·šä¸åœé ä¸Šä¸€æ®µçš„çµ‚é»žç«™ã€‚";
+            case "Selected bus route cannot connect to the next starting stop.": return "æ‰€é¸å·´å£«è·¯ç·šç„¡æ³•é€£æŽ¥ä¸‹ä¸€æ®µçš„èµ·é»žç«™ã€‚";
+            case "Terminal stop must come after the starting stop.": return "çµ‚é»žç«™å¿…é ˆä½æ–¼èµ·é»žç«™ä¹‹å¾Œã€‚";
+            case "Selected route must stop at the same starting and terminal stops.": return "æ‰€é¸è·¯ç·šå¿…é ˆåœé ç›¸åŒçš„èµ·é»žç«™å’Œçµ‚é»žç«™ã€‚";
+            case "Search for a route and save it here.": return "æœå°‹è·¯ç·šä¸¦å„²å­˜åœ¨æ­¤ã€‚";
+            case "No saved routes yet": return "å°šæœªå„²å­˜è·¯ç·š";
+            case "Create Group": return "å»ºç«‹ç¾¤çµ„";
+            case "New Group": return "æ–°å¢žç¾¤çµ„";
+            case "Group name": return "ç¾¤çµ„åç¨±";
+            case "Rename Group": return "é‡æ–°å‘½åç¾¤çµ„";
+            case "Delete Group": return "åˆªé™¤ç¾¤çµ„";
+            case "Delete Bookmark": return "åˆªé™¤æ”¶è—";
+            case "Delete Route": return "åˆªé™¤è·¯ç·š";
+            case "Rename Route": return "é‡æ–°å‘½åè·¯ç·š";
+            case "Group Color": return "ç¾¤çµ„é¡è‰²";
+            case "Move": return "ç§»å‹•";
+            case "Move to Group": return "ç§»å‹•è‡³ç¾¤çµ„";
+            case "Ungrouped": return "æœªåˆ†çµ„";
+            case "All": return "å…¨éƒ¨";
+            case "Nearest": return "æœ€è¿‘";
+            case "Due": return "å³å°‡åˆ°ç«™";
+            case "No data": return "æ²’æœ‰è³‡æ–™";
+            case "Checking for updates...": return "æ­£åœ¨æª¢æŸ¥æ›´æ–°...";
+            case "Latest GitHub release has no APK asset.": return "æœ€æ–° GitHub ç™¼ä½ˆæ²’æœ‰ APK æª”æ¡ˆã€‚";
+            case "You are already on the latest release: ": return "å·²æ˜¯æœ€æ–°ç‰ˆæœ¬ï¼š";
+            case "New release found: ": return "æ‰¾åˆ°æ–°ç‰ˆæœ¬ï¼š";
+            case "Download failed. ": return "ä¸‹è¼‰å¤±æ•—ã€‚";
+            case "Opening installer...": return "æ­£åœ¨é–‹å•Ÿå®‰è£ç¨‹å¼...";
+            case "Enable Live Updates": return "å•Ÿç”¨ Live Updates";
+            case "Open Live Update Settings": return "é–‹å•Ÿ Live Updates è¨­å®š";
+            case "Enable Live Updates for HK Bus so tracking can appear as an Android 16 live update instead of a regular notification.": return "ç‚º HK Bus å•Ÿç”¨ Live Updatesï¼Œè®“è¿½è¹¤ä»¥ Android 16 Live Update é¡¯ç¤ºï¼Œè€Œä¸æ˜¯ä¸€èˆ¬é€šçŸ¥ã€‚";
+            case "Starting Bus Stop": return "èµ·é»žå·´å£«ç«™";
+            case "Ending Bus Stop": return "çµ‚é»žå·´å£«ç«™";
+            case "Create Route": return "å»ºç«‹è·¯ç·š";
+            case "Searching shortest bus path": return "æ­£åœ¨æœå°‹æœ€çŸ­å·´å£«è·¯å¾‘";
+            case "Route API failed: ": return "è·¯ç·š API å¤±æ•—ï¼š";
+            case "Remove this bus route from the journey?": return "å¾žè¡Œç¨‹ä¸­ç§»é™¤æ­¤å·´å£«è·¯ç·šï¼Ÿ";
+            case "Android download manager failed.": return "Android ä¸‹è¼‰ç®¡ç†å“¡å¤±æ•—ã€‚";
+            case "Timed out waiting for download.": return "ç­‰å¾…ä¸‹è¼‰é€¾æ™‚ã€‚";
+            case "Route": return "è·¯ç·š";
             case "Route number or destination": return "\u8def\u7dda\u865f\u78bc\u6216\u76ee\u7684\u5730";
             case "Chinese": return "\u4e2d\u6587";
             case "English": return "English";
@@ -2356,9 +2486,13 @@ public class MainActivity extends Activity {
         boolean detailOpen = navIsland != null && navIsland.getVisibility() != View.VISIBLE;
         if (groupFab != null) {
             boolean visible = (tab == 0 || tab == 1) && !groupOrderMode && !detailOpen;
+            groupFabScrollVisible = visible;
+            groupFab.animate().cancel();
             groupFab.setVisibility(visible ? View.VISIBLE : View.GONE);
             groupFab.setAlpha(visible ? 1f : 0f);
             groupFab.setTranslationY(0);
+            groupFab.setScaleX(1f);
+            groupFab.setScaleY(1f);
             groupFab.setEnabled(visible);
         }
     }
@@ -2945,8 +3079,9 @@ public class MainActivity extends Activity {
 
     private void showBottomSheet(String title, View body) {
         dismissSheet();
+        Bitmap menuSnapshot = captureRootSnapshot();
         sheetOverlay = new FrameLayout(this);
-        sheetOverlay.setBackgroundColor(Color.argb(96, 0, 0, 0));
+        sheetOverlay.setBackgroundColor(Color.argb(80, 0, 0, 0));
         sheetOverlay.setOnClickListener(v -> dismissSheet());
 
         LinearLayout sheet = new LinearLayout(this);
@@ -2955,6 +3090,7 @@ public class MainActivity extends Activity {
         sheet.setBackground(round(menuSheetSurface(), dp(30), tint(BLUE, 0.38f)));
         sheet.setClipToPadding(false);
         sheet.setClipChildren(false);
+        if (Build.VERSION.SDK_INT >= 21) sheet.setClipToOutline(true);
         sheet.setOnClickListener(v -> {});
         TextView sheetTitle = text(title, 24, TEXT, true);
         sheetTitle.setSingleLine(true);
@@ -2967,39 +3103,76 @@ public class MainActivity extends Activity {
         }
         sheet.addView(body, bp);
 
+        FrameLayout sheetFrame = new FrameLayout(this);
+        sheetFrame.setClipChildren(false);
+        sheetFrame.setClipToPadding(false);
+        sheetBlurLayer = createMenuBlurLayer();
+        sheetFrame.addView(sheetBlurLayer, new FrameLayout.LayoutParams(-1, -1));
+        sheetFrame.addView(sheet, new FrameLayout.LayoutParams(-1, -2));
+        sheetFrame.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, orr, ob) -> updateMenuBlurLayer(menuSnapshot, sheetFrame));
+
         final int sideMargin = dp(10);
         final int bottomMargin = dp(10);
         FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
         sp.setMargins(sideMargin, 0, sideMargin, bottomMargin);
         sheetOverlay.setClipChildren(false);
-        sheetOverlay.addView(sheet, sp);
+        sheetOverlay.addView(sheetFrame, sp);
         if (Build.VERSION.SDK_INT >= 30) {
             sheetOverlay.setOnApplyWindowInsetsListener((v, insets) -> {
                 Insets ime = insets.getInsets(WindowInsets.Type.ime());
-                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) sheet.getLayoutParams();
+                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) sheetFrame.getLayoutParams();
                 lp.setMargins(sideMargin, 0, sideMargin, bottomMargin + ime.bottom);
-                sheet.setLayoutParams(lp);
+                sheetFrame.setLayoutParams(lp);
                 return insets;
             });
         }
-        setMenuBackdropBlur(true);
         root.addView(sheetOverlay, new FrameLayout.LayoutParams(-1, -1));
         if (Build.VERSION.SDK_INT >= 30) sheetOverlay.requestApplyInsets();
-        sheet.setTranslationY(dp(320));
-        sheet.animate().translationY(0).setDuration(240).setInterpolator(new DecelerateInterpolator()).start();
+        sheetFrame.setTranslationY(dp(320));
+        sheetFrame.animate().translationY(0).setDuration(240).setInterpolator(new DecelerateInterpolator()).start();
     }
 
 
-    private void setMenuBackdropBlur(boolean enabled) {
-        if (Build.VERSION.SDK_INT < 31) return;
-        RenderEffect effect = enabled
-                ? RenderEffect.createBlurEffect(dp(12), dp(12), Shader.TileMode.CLAMP)
-                : null;
-        if (content != null) content.setRenderEffect(effect);
-        if (navIsland != null) navIsland.setRenderEffect(effect);
-        if (topMenu != null) topMenu.setRenderEffect(effect);
-        if (groupFab != null) groupFab.setRenderEffect(effect);
+    private ImageView createMenuBlurLayer() {
+        ImageView layer = new ImageView(this);
+        layer.setScaleType(ImageView.ScaleType.FIT_XY);
+        layer.setAlpha(0.74f);
+        layer.setBackground(round(menuSheetSurface(), dp(30), Color.TRANSPARENT));
+        if (Build.VERSION.SDK_INT >= 21) layer.setClipToOutline(true);
+        if (Build.VERSION.SDK_INT >= 31) {
+            layer.setRenderEffect(RenderEffect.createBlurEffect(dp(16), dp(16), Shader.TileMode.CLAMP));
+        }
+        layer.setClickable(false);
+        return layer;
     }
+
+    private Bitmap captureRootSnapshot() {
+        if (root == null || root.getWidth() <= 0 || root.getHeight() <= 0) return null;
+        try {
+            Bitmap bitmap = Bitmap.createBitmap(root.getWidth(), root.getHeight(), Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+            root.draw(canvas);
+            return bitmap;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private void updateMenuBlurLayer(Bitmap snapshot, View frame) {
+        if (sheetBlurLayer == null || snapshot == null || frame.getWidth() <= 0 || frame.getHeight() <= 0) return;
+        int left = Math.max(0, Math.min(snapshot.getWidth() - 1, frame.getLeft()));
+        int top = Math.max(0, Math.min(snapshot.getHeight() - 1, frame.getTop()));
+        int width = Math.max(1, Math.min(frame.getWidth(), snapshot.getWidth() - left));
+        int height = Math.max(1, Math.min(frame.getHeight(), snapshot.getHeight() - top));
+        try {
+            sheetBlurLayer.setImageBitmap(Bitmap.createBitmap(snapshot, left, top, width, height));
+        } catch (Exception ignored) {}
+    }
+
+    private int touchSlopForFab() {
+        return ViewConfiguration.get(this).getScaledTouchSlop();
+    }
+
     private void focusSearchField(EditText search) {
         search.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         search.requestFocus();
@@ -3011,9 +3184,9 @@ public class MainActivity extends Activity {
 
     private void dismissSheet() {
         if (sheetOverlay != null) {
-            setMenuBackdropBlur(false);
             root.removeView(sheetOverlay);
             sheetOverlay = null;
+            sheetBlurLayer = null;
         }
     }
 
