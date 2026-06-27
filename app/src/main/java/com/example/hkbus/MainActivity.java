@@ -13,8 +13,6 @@ import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
-import android.graphics.Bitmap;
-import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.RenderEffect;
@@ -100,7 +98,6 @@ public class MainActivity extends Activity {
     private FrameLayout navIsland;
     private LinearLayout nav;
     private FrameLayout sheetOverlay;
-    private ImageView sheetBlurLayer;
     private ImageButton groupFab;
     private ImageButton topMenu;
     private ImageView backgroundImage;
@@ -1948,10 +1945,7 @@ public class MainActivity extends Activity {
     private int elevatedSurface() { return blend(Color.rgb(27, 31, 42), BLUE, 0.17f); }
     private int fieldSurface() { return blend(Color.rgb(14, 18, 27), BLUE, 0.12f); }
     private int sheetSurface() { return blend(Color.rgb(24, 28, 38), BLUE, 0.18f); }
-    private int menuSheetSurface() {
-        int base = sheetSurface();
-        return Color.argb(214, Color.red(base), Color.green(base), Color.blue(base));
-    }
+    private int menuSheetSurface() { return sheetSurface(); }
     private int outline() { return blend(STROKE, BLUE, 0.28f); }
     private int navSurface() { return blend(Color.rgb(16, 20, 29), BLUE, 0.36f); }
     private int navSelectedSurface() { return blend(Color.rgb(210, 220, 244), BLUE, 0.30f); }
@@ -3079,7 +3073,6 @@ public class MainActivity extends Activity {
 
     private void showBottomSheet(String title, View body) {
         dismissSheet();
-        Bitmap menuSnapshot = captureRootSnapshot();
         sheetOverlay = new FrameLayout(this);
         sheetOverlay.setBackgroundColor(Color.argb(80, 0, 0, 0));
         sheetOverlay.setOnClickListener(v -> dismissSheet());
@@ -3102,71 +3095,25 @@ public class MainActivity extends Activity {
             bp.height = Math.min(dp(420), Math.round(getResources().getDisplayMetrics().heightPixels * 0.62f));
         }
         sheet.addView(body, bp);
-
-        FrameLayout sheetFrame = new FrameLayout(this);
-        sheetFrame.setClipChildren(false);
-        sheetFrame.setClipToPadding(false);
-        sheetBlurLayer = createMenuBlurLayer();
-        sheetFrame.addView(sheetBlurLayer, new FrameLayout.LayoutParams(-1, -1));
-        sheetFrame.addView(sheet, new FrameLayout.LayoutParams(-1, -2));
-        sheetFrame.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, orr, ob) -> updateMenuBlurLayer(menuSnapshot, sheetFrame));
-
         final int sideMargin = dp(10);
         final int bottomMargin = dp(10);
         FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
         sp.setMargins(sideMargin, 0, sideMargin, bottomMargin);
         sheetOverlay.setClipChildren(false);
-        sheetOverlay.addView(sheetFrame, sp);
+        sheetOverlay.addView(sheet, sp);
         if (Build.VERSION.SDK_INT >= 30) {
             sheetOverlay.setOnApplyWindowInsetsListener((v, insets) -> {
                 Insets ime = insets.getInsets(WindowInsets.Type.ime());
-                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) sheetFrame.getLayoutParams();
+                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) sheet.getLayoutParams();
                 lp.setMargins(sideMargin, 0, sideMargin, bottomMargin + ime.bottom);
-                sheetFrame.setLayoutParams(lp);
+                sheet.setLayoutParams(lp);
                 return insets;
             });
         }
         root.addView(sheetOverlay, new FrameLayout.LayoutParams(-1, -1));
         if (Build.VERSION.SDK_INT >= 30) sheetOverlay.requestApplyInsets();
-        sheetFrame.setTranslationY(dp(320));
-        sheetFrame.animate().translationY(0).setDuration(240).setInterpolator(new DecelerateInterpolator()).start();
-    }
-
-
-    private ImageView createMenuBlurLayer() {
-        ImageView layer = new ImageView(this);
-        layer.setScaleType(ImageView.ScaleType.FIT_XY);
-        layer.setAlpha(0.74f);
-        layer.setBackground(round(menuSheetSurface(), dp(30), Color.TRANSPARENT));
-        if (Build.VERSION.SDK_INT >= 21) layer.setClipToOutline(true);
-        if (Build.VERSION.SDK_INT >= 31) {
-            layer.setRenderEffect(RenderEffect.createBlurEffect(dp(16), dp(16), Shader.TileMode.CLAMP));
-        }
-        layer.setClickable(false);
-        return layer;
-    }
-
-    private Bitmap captureRootSnapshot() {
-        if (root == null || root.getWidth() <= 0 || root.getHeight() <= 0) return null;
-        try {
-            Bitmap bitmap = Bitmap.createBitmap(root.getWidth(), root.getHeight(), Bitmap.Config.ARGB_8888);
-            Canvas canvas = new Canvas(bitmap);
-            root.draw(canvas);
-            return bitmap;
-        } catch (Throwable ignored) {
-            return null;
-        }
-    }
-
-    private void updateMenuBlurLayer(Bitmap snapshot, View frame) {
-        if (sheetBlurLayer == null || snapshot == null || frame.getWidth() <= 0 || frame.getHeight() <= 0) return;
-        int left = Math.max(0, Math.min(snapshot.getWidth() - 1, frame.getLeft()));
-        int top = Math.max(0, Math.min(snapshot.getHeight() - 1, frame.getTop()));
-        int width = Math.max(1, Math.min(frame.getWidth(), snapshot.getWidth() - left));
-        int height = Math.max(1, Math.min(frame.getHeight(), snapshot.getHeight() - top));
-        try {
-            sheetBlurLayer.setImageBitmap(Bitmap.createBitmap(snapshot, left, top, width, height));
-        } catch (Exception ignored) {}
+        sheet.setTranslationY(dp(320));
+        sheet.animate().translationY(0).setDuration(240).setInterpolator(new DecelerateInterpolator()).start();
     }
 
     private int touchSlopForFab() {
@@ -3186,7 +3133,6 @@ public class MainActivity extends Activity {
         if (sheetOverlay != null) {
             root.removeView(sheetOverlay);
             sheetOverlay = null;
-            sheetBlurLayer = null;
         }
     }
 
