@@ -1842,6 +1842,10 @@ public class MainActivity extends Activity {
     private int elevatedSurface() { return blend(Color.rgb(27, 31, 42), BLUE, 0.17f); }
     private int fieldSurface() { return blend(Color.rgb(14, 18, 27), BLUE, 0.12f); }
     private int sheetSurface() { return blend(Color.rgb(24, 28, 38), BLUE, 0.18f); }
+    private int menuSheetSurface() {
+        int base = sheetSurface();
+        return Color.argb(222, Color.red(base), Color.green(base), Color.blue(base));
+    }
     private int outline() { return blend(STROKE, BLUE, 0.28f); }
     private int navSurface() { return blend(Color.rgb(16, 20, 29), BLUE, 0.36f); }
     private int navSelectedSurface() { return blend(Color.rgb(210, 220, 244), BLUE, 0.30f); }
@@ -1885,23 +1889,51 @@ public class MainActivity extends Activity {
         View topFade = new View(this);
         topFade.setBackground(new android.graphics.drawable.GradientDrawable(
                 android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{sheetSurface(), Color.TRANSPARENT}));
+                new int[]{menuSheetSurface(), Color.TRANSPARENT}));
         topFade.setClickable(false);
-        frame.addView(topFade, new FrameLayout.LayoutParams(-1, dp(18), Gravity.TOP));
+        frame.addView(topFade, new FrameLayout.LayoutParams(-1, dp(22), Gravity.TOP));
         View bottomFade = new View(this);
         bottomFade.setBackground(new android.graphics.drawable.GradientDrawable(
                 android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP,
-                new int[]{sheetSurface(), Color.TRANSPARENT}));
+                new int[]{menuSheetSurface(), Color.TRANSPARENT}));
         bottomFade.setClickable(false);
-        frame.addView(bottomFade, new FrameLayout.LayoutParams(-1, dp(18), Gravity.BOTTOM));
+        frame.addView(bottomFade, new FrameLayout.LayoutParams(-1, dp(22), Gravity.BOTTOM));
+        if (Build.VERSION.SDK_INT >= 21) {
+            topFade.setTranslationZ(dp(8));
+            bottomFade.setTranslationZ(dp(8));
+        }
+        frame.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, orr, ob) -> {
+            topFade.bringToFront();
+            bottomFade.bringToFront();
+        });
+        topFade.bringToFront();
+        bottomFade.bringToFront();
         return frame;
     }
     private void setFabForScroll(boolean visible) {
         if (groupFab == null || groupFab.getVisibility() == View.GONE || !groupFab.isEnabled()) return;
         groupFab.animate().cancel();
-        groupFab.setAlpha(visible ? 1f : 0f);
-        groupFab.setTranslationY(visible ? 0 : dp(22));
-        groupFab.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
+        if (visible) {
+            groupFab.setVisibility(View.VISIBLE);
+            groupFab.animate()
+                    .alpha(1f)
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .translationY(0)
+                    .setDuration(240)
+                    .setInterpolator(new DecelerateInterpolator())
+                    .start();
+        } else {
+            groupFab.animate()
+                    .alpha(0f)
+                    .scaleX(0.72f)
+                    .scaleY(0.72f)
+                    .translationY(dp(24))
+                    .setDuration(190)
+                    .setInterpolator(new DecelerateInterpolator())
+                    .withEndAction(() -> groupFab.setVisibility(View.INVISIBLE))
+                    .start();
+        }
     }
     private ImageButton themedImageButton(int iconRes, int fill, int iconColor, int stroke, int radius) {
         ImageButton b = new ImageButton(this);
@@ -2914,13 +2946,15 @@ public class MainActivity extends Activity {
     private void showBottomSheet(String title, View body) {
         dismissSheet();
         sheetOverlay = new FrameLayout(this);
-        sheetOverlay.setBackgroundColor(Color.argb(150, 0, 0, 0));
+        sheetOverlay.setBackgroundColor(Color.argb(96, 0, 0, 0));
         sheetOverlay.setOnClickListener(v -> dismissSheet());
 
         LinearLayout sheet = new LinearLayout(this);
         sheet.setOrientation(LinearLayout.VERTICAL);
         sheet.setPadding(dp(22), dp(18), dp(22), dp(22));
-        sheet.setBackground(round(sheetSurface(), dp(30), tint(BLUE, 0.38f)));
+        sheet.setBackground(round(menuSheetSurface(), dp(30), tint(BLUE, 0.38f)));
+        sheet.setClipToPadding(false);
+        sheet.setClipChildren(false);
         sheet.setOnClickListener(v -> {});
         TextView sheetTitle = text(title, 24, TEXT, true);
         sheetTitle.setSingleLine(true);
@@ -2937,6 +2971,7 @@ public class MainActivity extends Activity {
         final int bottomMargin = dp(10);
         FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM);
         sp.setMargins(sideMargin, 0, sideMargin, bottomMargin);
+        sheetOverlay.setClipChildren(false);
         sheetOverlay.addView(sheet, sp);
         if (Build.VERSION.SDK_INT >= 30) {
             sheetOverlay.setOnApplyWindowInsetsListener((v, insets) -> {
@@ -2947,6 +2982,7 @@ public class MainActivity extends Activity {
                 return insets;
             });
         }
+        setMenuBackdropBlur(true);
         root.addView(sheetOverlay, new FrameLayout.LayoutParams(-1, -1));
         if (Build.VERSION.SDK_INT >= 30) sheetOverlay.requestApplyInsets();
         sheet.setTranslationY(dp(320));
@@ -2954,6 +2990,16 @@ public class MainActivity extends Activity {
     }
 
 
+    private void setMenuBackdropBlur(boolean enabled) {
+        if (Build.VERSION.SDK_INT < 31) return;
+        RenderEffect effect = enabled
+                ? RenderEffect.createBlurEffect(dp(12), dp(12), Shader.TileMode.CLAMP)
+                : null;
+        if (content != null) content.setRenderEffect(effect);
+        if (navIsland != null) navIsland.setRenderEffect(effect);
+        if (topMenu != null) topMenu.setRenderEffect(effect);
+        if (groupFab != null) groupFab.setRenderEffect(effect);
+    }
     private void focusSearchField(EditText search) {
         search.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         search.requestFocus();
@@ -2965,6 +3011,7 @@ public class MainActivity extends Activity {
 
     private void dismissSheet() {
         if (sheetOverlay != null) {
+            setMenuBackdropBlur(false);
             root.removeView(sheetOverlay);
             sheetOverlay = null;
         }
