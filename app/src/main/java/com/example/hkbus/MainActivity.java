@@ -81,7 +81,8 @@ public class MainActivity extends Activity {
     private static final String UPDATE_REPO = "Zylofyy/HK-Bus";
     private static final String LATEST_RELEASE_URL = "https://api.github.com/repos/" + UPDATE_REPO + "/releases/latest";
     private static final int PICK_BACKGROUND_IMAGE = 8042;
-private static final int BG = Color.rgb(5, 7, 13);
+    private static volatile boolean USE_TRADITIONAL_CHINESE = false;
+    private static final int BG = Color.rgb(5, 7, 13);
     private static final int PANEL = Color.argb(165, 24, 28, 38);
     private static final int CARD = Color.rgb(17, 21, 31);
     private static final int STROKE = Color.rgb(47, 57, 74);
@@ -101,7 +102,7 @@ private static final int BG = Color.rgb(5, 7, 13);
     private ImageButton topMenu;
     private ImageView backgroundImage;
     private TextView refreshPrompt;
-private int tab = 0;
+    private int tab = 0;
     private SharedPreferences prefs;
     private final List<Route> routes = new ArrayList<>();
     private final Map<String, LinearLayout> previewEtaViews = new HashMap<>();
@@ -128,6 +129,7 @@ private int tab = 0;
         super.onCreate(savedInstanceState);
         getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         prefs = getSharedPreferences("hkbus", MODE_PRIVATE);
+        syncLanguagePreference();
         loadThemeColor();
         maybeAskLocation();
         buildShell();
@@ -201,7 +203,7 @@ private int tab = 0;
             else showCreateGroupDialog(null);
         });
         FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(dp(72), dp(72), Gravity.BOTTOM | Gravity.RIGHT);
-        fp.setMargins(0, 0, dp(8), dp(124));
+        fp.setMargins(0, 0, dp(14), dp(130));
         root.addView(groupFab, fp);
 
         applyThemeSurfaces();
@@ -274,7 +276,7 @@ private int tab = 0;
     }
 
     private void showRouteFabMenu() {
-        showOptionSheet("Routes", new String[]{"Create Route"}, (index, label) -> showNewRouteNameSheet());
+        showOptionSheet(t("Routes"), new String[]{t("Create Route")}, (index, label) -> showNewRouteNameSheet());
     }
 
     private void showNewRouteNameSheet() {
@@ -303,7 +305,7 @@ private int tab = 0;
                 runOnUiThread(() -> {
                     dismissSheet();
                     if (legs.isEmpty()) {
-                        showInfoSheet("Route", "No bus path was found between those stops.");
+                        showInfoSheet(t("Route"), t("No bus path was found between those stops."));
                         return;
                     }
                     customRoute.legs.clear();
@@ -313,7 +315,7 @@ private int tab = 0;
             } catch (Exception e) {
                 runOnUiThread(() -> {
                     dismissSheet();
-                    showInfoSheet("Route", "Could not generate route: " + e.getMessage());
+                    showInfoSheet(t("Route"), t("Could not generate route: ") + e.getMessage());
                 });
             }
         });
@@ -322,7 +324,7 @@ private int tab = 0;
     private RouteSearchProgress showRouteSearchProgressSheet() {
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
-        TextView status = text("Searching shortest bus path (0%)", 16, MUTED, false);
+        TextView status = text(t("Searching shortest bus path") + " (0%)", 16, MUTED, false);
         status.setGravity(Gravity.CENTER);
         status.setPadding(dp(12), dp(14), dp(12), dp(14));
         body.addView(status, new LinearLayout.LayoutParams(-1, -2));
@@ -332,7 +334,7 @@ private int tab = 0;
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(12));
         bp.setMargins(0, dp(4), 0, dp(4));
         body.addView(bar, bp);
-        showBottomSheet("Finding Route", body);
+        showBottomSheet(t("Finding Route"), body);
         return new RouteSearchProgress(status, bar);
     }
 
@@ -517,7 +519,7 @@ private int tab = 0;
             if (choiceIndex == 0) {
                 beginAddAlternativeRoute(customRoute, index);
             } else if (choiceIndex == 1) {
-                showDeleteConfirmationSheet(t("Remove Bus Route"), "Remove this bus route from the journey?", () -> {
+                showDeleteConfirmationSheet(t("Remove Bus Route"), t("Remove this bus route from the journey?"), () -> {
                     if (index >= 0 && index < customRoute.legs.size()) customRoute.legs.remove(index);
                     showCustomRouteEditor(customRoute);
                 });
@@ -535,7 +537,7 @@ private int tab = 0;
     }
 
     private void beginAddRouteLegAt(CustomRoute customRoute, int insertIndex) {
-        if (routes.isEmpty()) { showInfoSheet(t("Routes"), "Routes are still loading."); return; }
+        if (routes.isEmpty()) { showInfoSheet(t("Routes"), t("Routes are still loading.")); return; }
         int safeIndex = Math.max(0, Math.min(insertIndex, customRoute.legs.size()));
         Stop fixedStart = safeIndex > 0 ? customRoute.legs.get(safeIndex - 1).endStop() : null;
         Stop fixedEnd = safeIndex < customRoute.legs.size() ? customRoute.legs.get(safeIndex).startStop() : null;
@@ -559,7 +561,7 @@ private int tab = 0;
                 List<Stop> stops = cachedRouteStops(route, dir);
                 runOnUiThread(() -> chooseStartStop(route, dir, stops, customRoute, insertIndex, fixedStart, fixedEnd));
             } catch (Exception e) {
-                runOnUiThread(() -> showInfoSheet(t("Routes"), "Could not load stops: " + e.getMessage()));
+                runOnUiThread(() -> showInfoSheet(t("Routes"), t("Could not load stops: ") + e.getMessage()));
             }
         });
     }
@@ -568,7 +570,7 @@ private int tab = 0;
         if (fixedStart != null) {
             int startIndex = matchingStopIndex(stops, fixedStart, 0);
             if (startIndex < 0) {
-                showInfoSheet(t("Routes"), "Selected bus route does not stop at the previous terminal stop.");
+                showInfoSheet(t("Routes"), t("Selected bus route does not stop at the previous terminal stop."));
                 return;
             }
             chooseEndStop(route, dir, stops, startIndex, customRoute, insertIndex, fixedEnd);
@@ -581,14 +583,14 @@ private int tab = 0;
         if (fixedEnd != null) {
             int endIndex = matchingStopIndex(stops, fixedEnd, startIndex + 1);
             if (endIndex < 0) {
-                showInfoSheet(t("Routes"), "Selected bus route cannot connect to the next starting stop.");
+                showInfoSheet(t("Routes"), t("Selected bus route cannot connect to the next starting stop."));
                 return;
             }
             addCustomRouteLeg(route, dir, stops, startIndex, endIndex, customRoute, insertIndex);
         } else {
             showStopPickerSheet(t("Ending Stop"), stops, (endIndex, label) -> {
                 if (endIndex <= startIndex) {
-                    showInfoSheet(t("Routes"), "Terminal stop must come after the starting stop.");
+                    showInfoSheet(t("Routes"), t("Terminal stop must come after the starting stop."));
                     return;
                 }
                 addCustomRouteLeg(route, dir, stops, startIndex, endIndex, customRoute, insertIndex);
@@ -634,7 +636,7 @@ private int tab = 0;
 
     private void beginAddAlternativeRoute(CustomRoute customRoute, int index) {
         if (index < 0 || index >= customRoute.legs.size()) return;
-        if (routes.isEmpty()) { showInfoSheet(t("Routes"), "Routes are still loading."); return; }
+        if (routes.isEmpty()) { showInfoSheet(t("Routes"), t("Routes are still loading.")); return; }
         List<Route> choices = uniqueRouteChoices(routes);
         Collections.sort(choices, Comparator.comparing((Route r) -> r.route.length()).thenComparing(r -> r.route));
         showRoutePickerSheet(t("Select Bus Route"), choices, route -> chooseAlternativeDirection(route, customRoute, index));
@@ -658,13 +660,13 @@ private int tab = 0;
                 int startIndex = matchingStopIndex(stops, primary.startStop(), 0);
                 int endIndex = startIndex < 0 ? -1 : matchingStopIndex(stops, primary.endStop(), startIndex + 1);
                 if (startIndex < 0 || endIndex < 0) {
-                    runOnUiThread(() -> showInfoSheet(t("Alternative Routes"), "Selected route must stop at the same starting and terminal stops."));
+                    runOnUiThread(() -> showInfoSheet(t("Alternative Routes"), t("Selected route must stop at the same starting and terminal stops.")));
                     return;
                 }
                 CustomRouteLeg alternative = buildCustomRouteLeg(route, dir, stops, startIndex, endIndex).withoutAlternatives();
                 runOnUiThread(() -> addAlternativeRouteLeg(customRoute, index, alternative));
             } catch (Exception e) {
-                runOnUiThread(() -> showInfoSheet(t("Alternative Routes"), "Could not load stops: " + e.getMessage()));
+                runOnUiThread(() -> showInfoSheet(t("Alternative Routes"), t("Could not load stops: ") + e.getMessage()));
             }
         });
     }
@@ -1196,7 +1198,7 @@ private int tab = 0;
 
         List<Bookmark> marks = getBookmarks();
         if (marks.isEmpty()) {
-            list.addView(centerStatus("Search for a route and save it here."));
+            list.addView(centerStatus(t("Search for a route and save it here.")));
             return;
         }
 
@@ -1205,7 +1207,7 @@ private int tab = 0;
             if ("All".equals(selectedGroup) || b.group.equals(selectedGroup)) visible.add(b);
         }
         if (visible.isEmpty()) {
-            list.addView(centerStatus("No routes in " + selectedGroup));
+            list.addView(centerStatus(t("No routes in") + " " + selectedGroup));
             return;
         }
 
@@ -1276,7 +1278,7 @@ private int tab = 0;
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, 0, 1);
         lp.setMargins(0, dp(18), 0, 0);
         content.addView(scroll, lp);
-        stops.addView(centerStatus("Loading bus stops..."));
+        stops.addView(centerStatus(t("Loading bus stops...")));
         io.execute(() -> {
             try {
                 updateLocation();
@@ -1312,7 +1314,7 @@ private int tab = 0;
             } catch (Exception e) {
                 runOnUiThread(() -> {
                     stops.removeAllViews();
-                    stops.addView(centerStatus("Could not load stops: " + e.getMessage()));
+                    stops.addView(centerStatus(t("Could not load stops: ") + e.getMessage()));
                 });
             }
         });
@@ -1349,7 +1351,7 @@ private int tab = 0;
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
-                    content.addView(centerStatus("Route API failed: " + e.getMessage()));
+                    content.addView(centerStatus(t("Route API failed: ") + e.getMessage()));
                 });
             }
         });
@@ -1550,7 +1552,7 @@ private int tab = 0;
         choices.add("Ungrouped");
         choices.addAll(getGroups());
         choices.add("+ New Group");
-        showOptionSheet("Move " + b.route, choices.toArray(new String[0]), (index, choice) -> {
+        showOptionSheet(t("Move") + " " + b.route, choices.toArray(new String[0]), (index, choice) -> {
             if ("+ New Group".equals(choice)) showCreateGroupDialog(b);
             else moveBookmark(b, choice);
         });
@@ -1773,9 +1775,9 @@ private int tab = 0;
     }
 
     private void showGroupColorDialog(String group) {
-        String[] names = {"Blue", "Teal", "Green", "Orange", "Pink", "Purple", "Gray"};
+        String[] names = {t("Blue"), t("Teal"), t("Green"), t("Orange"), t("Pink"), t("Purple"), t("Gray")};
         int[] colors = {BLUE, Color.rgb(64, 200, 224), Color.rgb(48, 209, 88), Color.rgb(255, 159, 10), Color.rgb(255, 55, 95), Color.rgb(191, 90, 242), Color.rgb(99, 110, 128)};
-        showOptionSheet("Group Color", names, (index, choice) -> {
+        showOptionSheet(t("Group Color"), names, (index, choice) -> {
             setGroupColor(group, colors[index]);
             showBookmarks();
         });
@@ -1873,6 +1875,23 @@ private int tab = 0;
         scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
     }
 
+    private View pickerScrollContainer(ScrollView scroll) {
+        FrameLayout frame = new FrameLayout(this);
+        frame.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        View topFade = new View(this);
+        topFade.setBackground(new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{sheetSurface(), Color.TRANSPARENT}));
+        topFade.setClickable(false);
+        frame.addView(topFade, new FrameLayout.LayoutParams(-1, dp(18), Gravity.TOP));
+        View bottomFade = new View(this);
+        bottomFade.setBackground(new android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP,
+                new int[]{sheetSurface(), Color.TRANSPARENT}));
+        bottomFade.setClickable(false);
+        frame.addView(bottomFade, new FrameLayout.LayoutParams(-1, dp(18), Gravity.BOTTOM));
+        return frame;
+    }
     private void setFabForScroll(boolean visible) {
         if (groupFab == null || groupFab.getVisibility() == View.GONE || !groupFab.isEnabled()) return;
         groupFab.animate().cancel();
@@ -1959,8 +1978,8 @@ private int tab = 0;
     private void showPromotedNotificationsSheet() {
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
-        body.addView(text("Enable Live Updates for HK Bus so tracking can appear as an Android 16 live update instead of a regular notification.", 16, MUTED, false));
-        Button open = sheetButton("Open Live Update Settings");
+        body.addView(text(t("Enable Live Updates for HK Bus so tracking can appear as an Android 16 live update instead of a regular notification."), 16, MUTED, false));
+        Button open = sheetButton(t("Open Live Update Settings"));
         open.setOnClickListener(v -> {
             dismissSheet();
             try {
@@ -1976,7 +1995,7 @@ private int tab = 0;
         LinearLayout.LayoutParams op = new LinearLayout.LayoutParams(-1, dp(56));
         op.setMargins(0, dp(16), 0, 0);
         body.addView(open, op);
-        showBottomSheet("Enable Live Updates", body);
+        showBottomSheet(t("Enable Live Updates"), body);
     }
     private void showCurrentTab() {
         if (navIsland != null) navIsland.setVisibility(View.VISIBLE);
@@ -1990,6 +2009,10 @@ private int tab = 0;
     }
 
 
+
+    private void syncLanguagePreference() {
+        USE_TRADITIONAL_CHINESE = prefs != null && "zh".equals(prefs.getString("language", "en"));
+    }
 
     private String t(String en) {
         if (!"zh".equals(prefs == null ? "en" : prefs.getString("language", "en"))) return en;
@@ -2054,6 +2077,65 @@ private int tab = 0;
             case "Current version: ": return "\u76ee\u524d\u7248\u672c\uff1a";
             case "Download and install": return "\u4e0b\u8f09\u4e26\u5b89\u88dd";
             case "Update Available": return "\u6709\u53ef\u7528\u66f4\u65b0";
+            case "Follow System": return "跟隨系統";
+            case "Blue": return "藍色";
+            case "Teal": return "藍綠色";
+            case "Green": return "綠色";
+            case "Orange": return "橙色";
+            case "Pink": return "粉紅色";
+            case "Purple": return "紫色";
+            case "Gray": return "灰色";
+            case "Refreshing": return "正在重新整理";
+            case "Stops": return "車站";
+            case "Loading Stops": return "正在載入車站";
+            case "Loading bus stops...": return "正在載入巴士站...";
+            case "No routes in": return "沒有路線於";
+            case "Routes are still loading.": return "路線仍在載入中。";
+            case "Could not load stops: ": return "未能載入車站：";
+            case "Could not generate route: ": return "未能產生路線：";
+            case "No bus path was found between those stops.": return "找不到連接這兩個車站的巴士路線。";
+            case "Finding Route": return "正在尋找路線";
+            case "Finding route...": return "正在尋找路線...";
+            case "Selected bus route does not stop at the previous terminal stop.": return "所選巴士路線不停靠上一段的終點站。";
+            case "Selected bus route cannot connect to the next starting stop.": return "所選巴士路線無法連接下一段的起點站。";
+            case "Terminal stop must come after the starting stop.": return "終點站必須位於起點站之後。";
+            case "Selected route must stop at the same starting and terminal stops.": return "所選路線必須停靠相同的起點站和終點站。";
+            case "Search for a route and save it here.": return "搜尋路線並儲存在此。";
+            case "No saved routes yet": return "尚未儲存路線";
+            case "Create Group": return "建立群組";
+            case "New Group": return "新增群組";
+            case "Group name": return "群組名稱";
+            case "Rename Group": return "重新命名群組";
+            case "Delete Group": return "刪除群組";
+            case "Delete Bookmark": return "刪除收藏";
+            case "Delete Route": return "刪除路線";
+            case "Rename Route": return "重新命名路線";
+            case "Group Color": return "群組顏色";
+            case "Move": return "移動";
+            case "Move to Group": return "移動至群組";
+            case "Ungrouped": return "未分組";
+            case "All": return "全部";
+            case "Nearest": return "最近";
+            case "Due": return "即將到站";
+            case "No data": return "沒有資料";
+            case "Checking for updates...": return "正在檢查更新...";
+            case "Latest GitHub release has no APK asset.": return "最新 GitHub 發佈沒有 APK 檔案。";
+            case "You are already on the latest release: ": return "已是最新版本：";
+            case "New release found: ": return "找到新版本：";
+            case "Download failed. ": return "下載失敗。";
+            case "Opening installer...": return "正在開啟安裝程式...";
+            case "Enable Live Updates": return "啟用 Live Updates";
+            case "Open Live Update Settings": return "開啟 Live Updates 設定";
+            case "Enable Live Updates for HK Bus so tracking can appear as an Android 16 live update instead of a regular notification.": return "為 HK Bus 啟用 Live Updates，讓追蹤以 Android 16 Live Update 顯示，而不是一般通知。";
+            case "Starting Bus Stop": return "起點巴士站";
+            case "Ending Bus Stop": return "終點巴士站";
+            case "Create Route": return "建立路線";
+            case "Searching shortest bus path": return "正在搜尋最短巴士路徑";
+            case "Route API failed: ": return "路線 API 失敗：";
+            case "Remove this bus route from the journey?": return "從行程中移除此巴士路線？";
+            case "Android download manager failed.": return "Android 下載管理員失敗。";
+            case "Timed out waiting for download.": return "等待下載逾時。";
+            case "Route": return "路線";
             case "Route number or destination": return "\u8def\u7dda\u865f\u78bc\u6216\u76ee\u7684\u5730";
             case "Chinese": return "\u4e2d\u6587";
             case "English": return "English";
@@ -2115,6 +2197,7 @@ private int tab = 0;
                             if (pull > 0) {
                                 setTranslationY(pull);
                                 setRefreshPromptPull(prompt, pull / (float) dp(72));
+                                return true;
                             }
                         }
                     }
@@ -2123,7 +2206,8 @@ private int tab = 0;
                 case MotionEvent.ACTION_CANCEL:
                     float pulled = getTranslationY();
                     if (pulling || pulled > 0) {
-                        animate().translationY(0).setDuration(180).setInterpolator(new DecelerateInterpolator()).start();
+                        RefreshScrollView.this.animate().cancel();
+                        RefreshScrollView.this.animate().translationY(0).setDuration(260).setInterpolator(new DecelerateInterpolator()).start();
                         if (!triggered && pulled >= dp(42)) {
                             triggered = true;
                             showRefreshPrompt(prompt);
@@ -2135,6 +2219,7 @@ private int tab = 0;
                     downX = -1f;
                     downY = -1f;
                     pulling = false;
+                    if (pulled > 0) return true;
                     break;
             }
             return super.dispatchTouchEvent(event);
@@ -2163,7 +2248,7 @@ private int tab = 0;
 
     private void refreshCurrentTab() {
         updateLocation();
-        Toast.makeText(this, "zh".equals(prefs.getString("language", "en")) ? "\u6b63\u5728\u91cd\u65b0\u6574\u7406" : "Refreshing", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, t("Refreshing"), Toast.LENGTH_SHORT).show();
         if (tab == 2) {
             routes.clear();
             showSearch();
@@ -2300,15 +2385,22 @@ private int tab = 0;
         String[] labels = {t("English"), t("Chinese")};
         showOptionSheet(t("Language"), labels, (index, label) -> {
             prefs.edit().putString("language", index == 1 ? "zh" : "en").apply();
+            syncLanguagePreference();
+            routes.clear();
+            allStops.clear();
+            routeStopCache.clear();
+            precomputedRoutePatterns = null;
+            precomputedPhysicalStops = null;
+            loadRoutes();
             renderNav();
             showCurrentTab();
         });
     }
 
     private void showThemeSheet() {
-        String[] names = {"Follow System", "Blue", "Teal", "Green", "Orange", "Pink", "Purple"};
+        String[] names = {t("Follow System"), t("Blue"), t("Teal"), t("Green"), t("Orange"), t("Pink"), t("Purple")};
         int[] colors = {BLUE, Color.rgb(10, 132, 255), Color.rgb(64, 200, 224), Color.rgb(48, 209, 88), Color.rgb(255, 159, 10), Color.rgb(255, 55, 95), Color.rgb(191, 90, 242)};
-        showOptionSheet("Theme", names, (index, label) -> {
+        showOptionSheet(t("Theme"), names, (index, label) -> {
             if (index == 0) prefs.edit().putBoolean("themeSystem", true).apply();
             else prefs.edit().putBoolean("themeSystem", false).putInt("themeColor", colors[index]).apply();
             loadThemeColor();
@@ -2329,7 +2421,7 @@ private int tab = 0;
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
         sp.setMargins(0, dp(12), 0, 0);
         body.addView(status, sp);
-        showBottomSheet("About", body);
+        showBottomSheet(t("About"), body);
     }
 
     private String currentVersionName() {
@@ -2351,7 +2443,7 @@ private int tab = 0;
 
     private void checkForRelease(TextView status, Button check) {
         check.setEnabled(false);
-        status.setText("Checking for updates...");
+        status.setText(t("Checking for updates..."));
         io.execute(() -> {
             try {
                 JSONObject release = new JSONObject(httpGet(LATEST_RELEASE_URL));
@@ -2456,14 +2548,14 @@ private int tab = 0;
                 if (cursor != null && cursor.moveToFirst()) {
                     int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
                     if (status == DownloadManager.STATUS_SUCCESSFUL) return dm.getUriForDownloadedFile(id);
-                    if (status == DownloadManager.STATUS_FAILED) throw new RuntimeException("Android download manager failed.");
+                    if (status == DownloadManager.STATUS_FAILED) throw new RuntimeException(t("Android download manager failed."));
                 }
             } finally {
                 if (cursor != null) cursor.close();
             }
             Thread.sleep(1200);
         }
-        throw new RuntimeException("Timed out waiting for download.");
+        throw new RuntimeException(t("Timed out waiting for download."));
     }
 
     private void installApk(Uri apkUri) {
@@ -2515,8 +2607,8 @@ private int tab = 0;
     private void showInfoSheet(String title, String message) {
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
-        body.addView(text(message, 16, MUTED, false));
-        showBottomSheet(title, body);
+        body.addView(text(t(message), 16, MUTED, false));
+        showBottomSheet(t(title), body);
     }
 
     private void showOptionSheet(String title, String[] options, OptionHandler handler) {
@@ -2538,9 +2630,9 @@ private int tab = 0;
             scroll.setFillViewport(false);
             applyCardScrollFade(scroll);
             scroll.addView(body);
-            showBottomSheet(title, scroll);
+            showBottomSheet(t(title), scroll);
         } else {
-            showBottomSheet(title, body);
+            showBottomSheet(t(title), body);
         }
     }
 
@@ -2549,11 +2641,11 @@ private int tab = 0;
     private void showLoadingSheet(String title, String message) {
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
-        TextView status = text(message, 16, MUTED, false);
+        TextView status = text(t(message), 16, MUTED, false);
         status.setGravity(Gravity.CENTER);
         status.setPadding(dp(18), dp(22), dp(18), dp(22));
         body.addView(status, new LinearLayout.LayoutParams(-1, -2));
-        showBottomSheet(title, body);
+        showBottomSheet(t(title), body);
     }
 
     private void showStopPickerSheet(String title, List<Stop> stops, OptionHandler handler) {
@@ -2579,7 +2671,7 @@ private int tab = 0;
         scroll.addView(list);
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, dp(360));
         slp.setMargins(0, dp(12), 0, 0);
-        body.addView(scroll, slp);
+        body.addView(pickerScrollContainer(scroll), slp);
 
         Runnable render = () -> {
             list.removeAllViews();
@@ -2610,7 +2702,7 @@ private int tab = 0;
             public void afterTextChanged(Editable e) {}
         });
         render.run();
-        showBottomSheet(title, body);
+        showBottomSheet(t(title), body);
         focusSearchField(search);
     }
 
@@ -2620,11 +2712,11 @@ private int tab = 0;
             return;
         }
         if (allStopsLoading) {
-            showLoadingSheet("Loading Stops", "Loading bus stops...");
+            showLoadingSheet(t("Loading Stops"), t("Loading bus stops..."));
             return;
         }
         allStopsLoading = true;
-        showLoadingSheet("Loading Stops", "Loading bus stops...");
+        showLoadingSheet(t("Loading Stops"), t("Loading bus stops..."));
         io.execute(() -> {
             try {
                 List<Stop> loaded = loadStopPickerStops();
@@ -2637,7 +2729,7 @@ private int tab = 0;
             } catch (Exception e) {
                 runOnUiThread(() -> {
                     allStopsLoading = false;
-                    showInfoSheet("Stops", "Could not load stops: " + e.getMessage());
+                    showInfoSheet(t("Stops"), t("Could not load stops: ") + e.getMessage());
                 });
             }
         });
@@ -2666,7 +2758,7 @@ private int tab = 0;
         scroll.addView(list);
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, dp(380));
         slp.setMargins(0, dp(12), 0, 0);
-        body.addView(scroll, slp);
+        body.addView(pickerScrollContainer(scroll), slp);
 
         Runnable render = () -> {
             list.removeAllViews();
@@ -2695,7 +2787,7 @@ private int tab = 0;
             public void afterTextChanged(Editable e) {}
         });
         render.run();
-        showBottomSheet(title, body);
+        showBottomSheet(t(title), body);
         focusSearchField(search);
     }
 
@@ -2734,7 +2826,7 @@ private int tab = 0;
         scroll.addView(list);
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, dp(360));
         slp.setMargins(0, dp(12), 0, 0);
-        body.addView(scroll, slp);
+        body.addView(pickerScrollContainer(scroll), slp);
 
         Runnable render = () -> {
             list.removeAllViews();
@@ -2763,7 +2855,7 @@ private int tab = 0;
             public void afterTextChanged(Editable e) {}
         });
         render.run();
-        showBottomSheet(title, body);
+        showBottomSheet(t(title), body);
         focusSearchField(search);
     }
 
@@ -2788,7 +2880,7 @@ private int tab = 0;
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, dp(56));
         sp.setMargins(0, dp(14), 0, 0);
         body.addView(save, sp);
-        showBottomSheet(title, body);
+        showBottomSheet(t(title), body);
         input.requestFocus();
         input.postDelayed(() -> {
             InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
@@ -2874,7 +2966,7 @@ private int tab = 0;
     private void showDeleteConfirmationSheet(String title, String message, Runnable onDelete) {
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
-        body.addView(text(message, 16, MUTED, false));
+        body.addView(text(t(message), 16, MUTED, false));
         Button cancel = sheetButton(t("Cancel"));
         cancel.setOnClickListener(v -> dismissSheet());
         LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, dp(56));
@@ -2888,7 +2980,7 @@ private int tab = 0;
             onDelete.run();
         });
         body.addView(delete, new LinearLayout.LayoutParams(-1, dp(56)));
-        showBottomSheet(title, body);
+        showBottomSheet(t(title), body);
     }
 
     private Button materialButton(String label) {
@@ -3320,8 +3412,10 @@ private int tab = 0;
         }
 
         private List<Stop> mtrRouteStops(Bookmark b) throws Exception {
-            List<Stop> dictionaryStops = mtrDictionaryRouteStops(b);
-            if (dictionaryStops.size() > 1) return dictionaryStops;
+            if (!USE_TRADITIONAL_CHINESE) {
+                List<Stop> dictionaryStops = mtrDictionaryRouteStops(b);
+                if (dictionaryStops.size() > 1) return dictionaryStops;
+            }
             JSONObject schedule = mtrSchedule(b.route);
             JSONArray arr = schedule.getJSONArray("busStop");
             List<Stop> out = new ArrayList<>();
@@ -3329,7 +3423,10 @@ private int tab = 0;
                 JSONObject stop = arr.getJSONObject(i);
                 String id = stop.optString("busStopId", b.route + ":" + (i + 1));
                 MtrBusStops.Info info = MtrBusStops.get(id);
-                String name = info == null ? id : info.name;
+                String name = USE_TRADITIONAL_CHINESE
+                        ? firstNonEmpty(stop, "busStopNameChi", "busStopNameC", "busStopName_tc", "stopNameChi", "name_tc", "chiName", "name")
+                        : firstNonEmpty(stop, "busStopName", "busStopNameEng", "busStopNameE", "busStopName_en", "stopName", "name_en", "engName", "name");
+                if (name.length() == 0) name = info == null ? id : info.name;
                 double lat = info == null ? 0 : info.lat;
                 double lon = info == null ? 0 : info.lon;
                 out.add(new Stop(id, name, i + 1, lat, lon));
@@ -3420,7 +3517,7 @@ private int tab = 0;
         }
 
         private JSONObject mtrSchedule(String routeName) throws Exception {
-            return new JSONObject(post("https://rt.data.gov.hk/v1/transport/mtr/bus/getSchedule", "{\"language\":\"en\",\"routeName\":\"" + routeName + "\"}"));
+            return new JSONObject(post("https://rt.data.gov.hk/v1/transport/mtr/bus/getSchedule", "{\"language\":\"" + (USE_TRADITIONAL_CHINESE ? "zh" : "en") + "\",\"routeName\":\"" + routeName + "\"}"));
         }
 
         List<String> etas(Bookmark b, Stop s) throws Exception {
@@ -3447,7 +3544,7 @@ private int tab = 0;
         }
 
         private List<String> nlbEtas(Bookmark b, Stop s) throws Exception {
-            JSONObject root = new JSONObject(get("https://rt.data.gov.hk/v2/transport/nlb/stop.php?action=estimatedArrivals&routeId=" + enc(b.serviceType) + "&stopId=" + enc(s.id) + "&language=en"));
+            JSONObject root = new JSONObject(get("https://rt.data.gov.hk/v2/transport/nlb/stop.php?action=estimatedArrivals&routeId=" + enc(b.serviceType) + "&stopId=" + enc(s.id) + "&language=" + (USE_TRADITIONAL_CHINESE ? "tc" : "en")));
             JSONArray arr = root.optJSONArray("estimatedArrivals");
             List<String> times = new ArrayList<>();
             if (arr == null) return times;
@@ -3459,7 +3556,7 @@ private int tab = 0;
         }
 
         private Stop stop(String operator, String id) throws Exception {
-            String key = operator + ":" + id;
+            String key = (USE_TRADITIONAL_CHINESE ? "zh:" : "en:") + operator + ":" + id;
             if (stopCache.containsKey(key)) return stopCache.get(key);
             JSONObject data;
             if ("KMB".equals(operator)) {
@@ -3512,9 +3609,18 @@ private int tab = 0;
             return new String[]{name, ""};
         }
 
+        private static String firstNonEmpty(JSONObject o, String... keys) {
+            for (String key : keys) {
+                String v = o.optString(key, "").trim();
+                if (v.length() > 0) return v;
+            }
+            return "";
+        }
         private static String best(JSONObject o, String en, String tc) {
-            String v = o.optString(en, "");
-            return v.length() > 0 ? v : o.optString(tc, "");
+            String primary = USE_TRADITIONAL_CHINESE ? tc : en;
+            String fallback = USE_TRADITIONAL_CHINESE ? en : tc;
+            String v = o.optString(primary, "");
+            return v.length() > 0 ? v : o.optString(fallback, "");
         }
 
         private static String enc(String s) throws Exception {
@@ -3555,7 +3661,3 @@ private int tab = 0;
         }
     }
 }
-
-
-
-
