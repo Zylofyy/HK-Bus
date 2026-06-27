@@ -135,7 +135,7 @@ public class BusTrackingService extends Service {
         boolean etaLabel = isEtaLabel(next);
         String arrivalText = etaLabel ? timeUntilText(next) : next;
         String contentText = etaLabel ? arrivalText + " at " + stopName : next;
-        String subText = stopName;
+        String subText = "Live bus tracking";
         Intent appIntent = new Intent(this, MainActivity.class);
         PendingIntent contentIntent = PendingIntent.getActivity(this, 0, appIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Intent cancelIntent = new Intent(this, BusTrackingService.class).setAction(ACTION_CANCEL);
@@ -181,12 +181,16 @@ public class BusTrackingService extends Service {
 
     private String timeUntilText(String eta) {
         long etaMs = etaMillis(eta);
-        if (etaMs == 0) return "Due";
-        if (etaMs < 0) return eta == null || eta.length() == 0 ? "No ETA" : eta;
+        if (etaMs == 0) return normalizeDueText("Due");
+        if (etaMs < 0) return eta == null || eta.length() == 0 ? "No ETA" : normalizeDueText(eta);
         long minutes = Math.max(1, Math.round(etaMs / 60000f));
         return minutes + " min";
     }
 
+    private String normalizeDueText(String text) {
+        if (text == null) return "";
+        return text.replace("即將到站/已到站", "即將到站").replace("/已到站", "");
+    }
     private long etaMillis(String eta) {
         if (eta == null || eta.length() == 0) return -1;
         String lower = eta.toLowerCase(Locale.US).trim();
