@@ -476,7 +476,7 @@ public class MainActivity extends Activity {
     private View alternativeRoutesView(List<CustomRouteLeg> alternatives) {
         LinearLayout wrap = new LinearLayout(this);
         wrap.setOrientation(LinearLayout.VERTICAL);
-        TextView label = text(t("Alt routes"), 13, MUTED, false);
+        TextView label = text(t("Alternative routes"), 13, MUTED, false);
         label.setSingleLine(true);
         label.setEllipsize(TextUtils.TruncateAt.END);
         wrap.addView(label);
@@ -2218,7 +2218,7 @@ public class MainActivity extends Activity {
             case "Direction": return "\u65b9\u5411";
             case "Add Alternative Route": return "\u52a0\u5165\u66ff\u4ee3\u8def\u7dda";
             case "Alternative Routes": return "\u66ff\u4ee3\u8def\u7dda";
-            case "Alt routes": return "\u66ff\u4ee3\u8def\u7dda";
+            case "Alternative routes": return "\u66ff\u4ee3\u8def\u7dda";
             case "Checking arrivals...": return "\u6b63\u5728\u6aa2\u67e5\u5230\u7ad9\u6642\u9593...";
             case "Release to refresh": return "\u653e\u958b\u5373\u53ef\u91cd\u65b0\u6574\u7406";
             case "Remove Bus Route": return "\u79fb\u9664\u5df4\u58eb\u8def\u7dda";
@@ -2457,8 +2457,8 @@ public class MainActivity extends Activity {
                 vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
             }
             if (vibrator == null || !vibrator.hasVibrator()) return;
-            if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createOneShot(10, VibrationEffect.DEFAULT_AMPLITUDE));
-            else vibrator.vibrate(10);
+            if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createOneShot(7, VibrationEffect.DEFAULT_AMPLITUDE));
+            else vibrator.vibrate(7);
         } catch (Exception ignored) {}
     }
     private void applyExpressivePress(View v) {
