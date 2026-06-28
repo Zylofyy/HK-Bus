@@ -22,6 +22,9 @@ import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.os.VibratorManager;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.os.Bundle;
@@ -101,7 +104,7 @@ public class MainActivity extends Activity {
     private ImageButton groupFab;
     private ImageButton topMenu;
     private ImageView backgroundImage;
-    private TextView refreshPrompt;
+    private View refreshPrompt;
     private int tab = 0;
     private SharedPreferences prefs;
     private final List<Route> routes = new ArrayList<>();
@@ -200,8 +203,13 @@ public class MainActivity extends Activity {
 
         groupFab = themedImageButton(R.drawable.ic_plus_round, floatingSurface(), buttonText(), Color.TRANSPARENT, dp(22));
         groupFab.setOnClickListener(v -> {
-            if (tab == 1) showNewRouteNameSheet();
-            else showCreateGroupDialog(null);
+            if (tab == 1) {
+                vibrateFabRelease();
+                showNewRouteNameSheet();
+            } else if (tab == 0) {
+                vibrateFabRelease();
+                showCreateGroupDialog(null);
+            }
         });
         FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(dp(72), dp(72), Gravity.BOTTOM | Gravity.RIGHT);
         fp.setMargins(0, 0, dp(20), dp(136));
@@ -1425,7 +1433,7 @@ public class MainActivity extends Activity {
 
 
     private TextView nearestPill() {
-        TextView pill = text("Nearest", 12, Color.WHITE, true);
+        TextView pill = text(t("Nearest"), 12, Color.WHITE, true);
         pill.setGravity(Gravity.CENTER);
         pill.setPadding(dp(12), dp(5), dp(12), dp(5));
         pill.setBackground(round(BLUE, dp(16), Color.TRANSPARENT));
@@ -2237,68 +2245,75 @@ public class MainActivity extends Activity {
             case "Current version: ": return "\u76ee\u524d\u7248\u672c\uff1a";
             case "Download and install": return "\u4e0b\u8f09\u4e26\u5b89\u88dd";
             case "Update Available": return "\u6709\u53ef\u7528\u66f4\u65b0";
-            case "Follow System": return "è·Ÿéš¨ç³»çµ±";
-            case "Blue": return "è—è‰²";
-            case "Teal": return "è—ç¶ è‰²";
-            case "Green": return "ç¶ è‰²";
-            case "Orange": return "æ©™è‰²";
-            case "Pink": return "ç²‰ç´…è‰²";
-            case "Purple": return "ç´«è‰²";
-            case "Gray": return "ç°è‰²";
-            case "Refreshing": return "æ­£åœ¨é‡æ–°æ•´ç†";
-            case "Stops": return "è»Šç«™";
-            case "Loading Stops": return "æ­£åœ¨è¼‰å…¥è»Šç«™";
-            case "Loading bus stops...": return "æ­£åœ¨è¼‰å…¥å·´å£«ç«™...";
-            case "No routes in": return "æ²’æœ‰è·¯ç·šæ–¼";
-            case "Routes are still loading.": return "è·¯ç·šä»åœ¨è¼‰å…¥ä¸­ã€‚";
-            case "Could not load stops: ": return "æœªèƒ½è¼‰å…¥è»Šç«™ï¼š";
-            case "Could not generate route: ": return "æœªèƒ½ç”¢ç”Ÿè·¯ç·šï¼š";
-            case "No bus path was found between those stops.": return "æ‰¾ä¸åˆ°é€£æŽ¥é€™å…©å€‹è»Šç«™çš„å·´å£«è·¯ç·šã€‚";
-            case "Finding Route": return "æ­£åœ¨å°‹æ‰¾è·¯ç·š";
-            case "Finding route...": return "æ­£åœ¨å°‹æ‰¾è·¯ç·š...";
-            case "Selected bus route does not stop at the previous terminal stop.": return "æ‰€é¸å·´å£«è·¯ç·šä¸åœé ä¸Šä¸€æ®µçš„çµ‚é»žç«™ã€‚";
-            case "Selected bus route cannot connect to the next starting stop.": return "æ‰€é¸å·´å£«è·¯ç·šç„¡æ³•é€£æŽ¥ä¸‹ä¸€æ®µçš„èµ·é»žç«™ã€‚";
-            case "Terminal stop must come after the starting stop.": return "çµ‚é»žç«™å¿…é ˆä½æ–¼èµ·é»žç«™ä¹‹å¾Œã€‚";
-            case "Selected route must stop at the same starting and terminal stops.": return "æ‰€é¸è·¯ç·šå¿…é ˆåœé ç›¸åŒçš„èµ·é»žç«™å’Œçµ‚é»žç«™ã€‚";
-            case "Search for a route and save it here.": return "æœå°‹è·¯ç·šä¸¦å„²å­˜åœ¨æ­¤ã€‚";
-            case "No saved routes yet": return "å°šæœªå„²å­˜è·¯ç·š";
-            case "Create Group": return "å»ºç«‹ç¾¤çµ„";
-            case "New Group": return "æ–°å¢žç¾¤çµ„";
-            case "Group name": return "ç¾¤çµ„åç¨±";
-            case "Rename Group": return "é‡æ–°å‘½åç¾¤çµ„";
-            case "Delete Group": return "åˆªé™¤ç¾¤çµ„";
-            case "Delete Bookmark": return "åˆªé™¤æ”¶è—";
-            case "Delete Route": return "åˆªé™¤è·¯ç·š";
-            case "Rename Route": return "é‡æ–°å‘½åè·¯ç·š";
-            case "Group Color": return "ç¾¤çµ„é¡è‰²";
-            case "Move": return "ç§»å‹•";
-            case "Move to Group": return "ç§»å‹•è‡³ç¾¤çµ„";
-            case "Ungrouped": return "æœªåˆ†çµ„";
-            case "All": return "å…¨éƒ¨";
-            case "Nearest": return "æœ€è¿‘";
-            case "Due": return "å³å°‡åˆ°ç«™";
-            case "No data": return "æ²’æœ‰è³‡æ–™";
-            case "Checking for updates...": return "æ­£åœ¨æª¢æŸ¥æ›´æ–°...";
-            case "Latest GitHub release has no APK asset.": return "æœ€æ–° GitHub ç™¼ä½ˆæ²’æœ‰ APK æª”æ¡ˆã€‚";
-            case "You are already on the latest release: ": return "å·²æ˜¯æœ€æ–°ç‰ˆæœ¬ï¼š";
-            case "New release found: ": return "æ‰¾åˆ°æ–°ç‰ˆæœ¬ï¼š";
-            case "Download failed. ": return "ä¸‹è¼‰å¤±æ•—ã€‚";
-            case "Opening installer...": return "æ­£åœ¨é–‹å•Ÿå®‰è£ç¨‹å¼...";
-            case "Enable Live Updates": return "å•Ÿç”¨ Live Updates";
-            case "Open Live Update Settings": return "é–‹å•Ÿ Live Updates è¨­å®š";
-            case "Enable Live Updates for HK Bus so tracking can appear as an Android 16 live update instead of a regular notification.": return "ç‚º HK Bus å•Ÿç”¨ Live Updatesï¼Œè®“è¿½è¹¤ä»¥ Android 16 Live Update é¡¯ç¤ºï¼Œè€Œä¸æ˜¯ä¸€èˆ¬é€šçŸ¥ã€‚";
-            case "Starting Bus Stop": return "èµ·é»žå·´å£«ç«™";
-            case "Ending Bus Stop": return "çµ‚é»žå·´å£«ç«™";
-            case "Create Route": return "å»ºç«‹è·¯ç·š";
-            case "Searching shortest bus path": return "æ­£åœ¨æœå°‹æœ€çŸ­å·´å£«è·¯å¾‘";
-            case "Route API failed: ": return "è·¯ç·š API å¤±æ•—ï¼š";
-            case "Remove this bus route from the journey?": return "å¾žè¡Œç¨‹ä¸­ç§»é™¤æ­¤å·´å£«è·¯ç·šï¼Ÿ";
-            case "Android download manager failed.": return "Android ä¸‹è¼‰ç®¡ç†å“¡å¤±æ•—ã€‚";
-            case "Timed out waiting for download.": return "ç­‰å¾…ä¸‹è¼‰é€¾æ™‚ã€‚";
-            case "Route": return "è·¯ç·š";
+            case "Follow System": return "\u8ddf\u96a8\u7cfb\u7d71";
+            case "Blue": return "\u85cd\u8272";
+            case "Teal": return "\u85cd\u7da0\u8272";
+            case "Green": return "\u7da0\u8272";
+            case "Orange": return "\u6a59\u8272";
+            case "Pink": return "\u7c89\u7d05\u8272";
+            case "Purple": return "\u7d2b\u8272";
+            case "Gray": return "\u7070\u8272";
+            case "Refreshing": return "\u6b63\u5728\u91cd\u65b0\u6574\u7406";
+            case "Stops": return "\u8eca\u7ad9";
+            case "Loading Stops": return "\u6b63\u5728\u8f09\u5165\u8eca\u7ad9";
+            case "Loading bus stops...": return "\u6b63\u5728\u8f09\u5165\u5df4\u58eb\u7ad9...";
+            case "No routes in": return "\u6c92\u6709\u8def\u7dda\u65bc";
+            case "Routes are still loading.": return "\u8def\u7dda\u4ecd\u5728\u8f09\u5165\u4e2d\u3002";
+            case "Could not load stops: ": return "\u7121\u6cd5\u8f09\u5165\u8eca\u7ad9\uff1a";
+            case "Could not generate route: ": return "\u7121\u6cd5\u7522\u751f\u8def\u7dda\uff1a";
+            case "No bus path was found between those stops.": return "\u627e\u4e0d\u5230\u9023\u63a5\u9019\u5169\u500b\u8eca\u7ad9\u7684\u5df4\u58eb\u8def\u7dda\u3002";
+            case "Finding Route": return "\u6b63\u5728\u5c0b\u627e\u8def\u7dda";
+            case "Finding route...": return "\u6b63\u5728\u5c0b\u627e\u8def\u7dda...";
+            case "Selected bus route does not stop at the previous terminal stop.": return "\u6240\u9078\u5df4\u58eb\u8def\u7dda\u4e0d\u9014\u7d93\u4e0a\u4e00\u6bb5\u7684\u7d42\u9ede\u7ad9\u3002";
+            case "Selected bus route cannot connect to the next starting stop.": return "\u6240\u9078\u5df4\u58eb\u8def\u7dda\u7121\u6cd5\u9023\u63a5\u4e0b\u4e00\u6bb5\u7684\u8d77\u9ede\u7ad9\u3002";
+            case "Terminal stop must come after the starting stop.": return "\u7d42\u9ede\u7ad9\u5fc5\u9808\u4f4d\u65bc\u8d77\u9ede\u7ad9\u4e4b\u5f8c\u3002";
+            case "Selected route must stop at the same starting and terminal stops.": return "\u6240\u9078\u8def\u7dda\u5fc5\u9808\u9014\u7d93\u76f8\u540c\u7684\u8d77\u9ede\u7ad9\u548c\u7d42\u9ede\u7ad9\u3002";
+            case "Search for a route and save it here.": return "\u641c\u5c0b\u8def\u7dda\u4e26\u5132\u5b58\u5728\u6b64\u3002";
+            case "No saved routes yet": return "\u5c1a\u672a\u5132\u5b58\u8def\u7dda";
+            case "Create Group": return "\u5efa\u7acb\u7fa4\u7d44";
+            case "New Group": return "\u65b0\u589e\u7fa4\u7d44";
+            case "Group name": return "\u7fa4\u7d44\u540d\u7a31";
+            case "Rename Group": return "\u91cd\u65b0\u547d\u540d\u7fa4\u7d44";
+            case "Delete Group": return "\u522a\u9664\u7fa4\u7d44";
+            case "Delete Bookmark": return "\u522a\u9664\u6536\u85cf";
+            case "Delete Route": return "\u522a\u9664\u8def\u7dda";
+            case "Rename Route": return "\u91cd\u65b0\u547d\u540d\u8def\u7dda";
+            case "Group Color": return "\u7fa4\u7d44\u984f\u8272";
+            case "Move": return "\u79fb\u52d5";
+            case "Move to Group": return "\u79fb\u81f3\u7fa4\u7d44";
+            case "Ungrouped": return "\u672a\u5206\u7d44";
+            case "All": return "\u5168\u90e8";
+            case "Nearest": return "\u6700\u8fd1";
+            case "Due": return "\u5373\u5c07";
+            case "No data": return "\u6c92\u6709\u8cc7\u6599";
+            case "Checking for updates...": return "\u6b63\u5728\u6aa2\u67e5\u66f4\u65b0...";
+            case "Latest GitHub release has no APK asset.": return "\u6700\u65b0 GitHub \u767c\u4f48\u6c92\u6709 APK \u6a94\u6848\u3002";
+            case "You are already on the latest release: ": return "\u5df2\u662f\u6700\u65b0\u7248\u672c\uff1a";
+            case "New release found: ": return "\u627e\u5230\u65b0\u7248\u672c\uff1a";
+            case "Download failed. ": return "\u4e0b\u8f09\u5931\u6557\u3002";
+            case "Opening installer...": return "\u6b63\u5728\u958b\u555f\u5b89\u88dd\u7a0b\u5f0f...";
+            case "Enable Live Updates": return "\u555f\u7528\u5373\u6642\u52d5\u614b";
+            case "Open Live Update Settings": return "\u958b\u555f\u5373\u6642\u52d5\u614b\u8a2d\u5b9a";
+            case "Enable Live Updates for HK Bus so tracking can appear as an Android 16 live update instead of a regular notification.": return "\u70ba HK Bus \u555f\u7528 Android 16 \u5373\u6642\u52d5\u614b\uff0c\u8b93\u8ffd\u8e64\u986f\u793a\u70ba\u5373\u6642\u52d5\u614b\u800c\u4e0d\u662f\u4e00\u822c\u901a\u77e5\u3002";
+            case "Starting Bus Stop": return "\u8d77\u9ede\u5df4\u58eb\u7ad9";
+            case "Ending Bus Stop": return "\u7d42\u9ede\u5df4\u58eb\u7ad9";
+            case "Create Route": return "\u5efa\u7acb\u8def\u7dda";
+            case "Searching shortest bus path": return "\u6b63\u5728\u641c\u5c0b\u6700\u77ed\u5df4\u58eb\u8def\u5f91";
+            case "Route API failed: ": return "\u8def\u7dda API \u5931\u6557\uff1a";
+            case "Remove this bus route from the journey?": return "\u8981\u5f9e\u884c\u7a0b\u4e2d\u79fb\u9664\u6b64\u5df4\u58eb\u8def\u7dda\u55ce\uff1f";
+            case "Android download manager failed.": return "Android \u4e0b\u8f09\u7ba1\u7406\u54e1\u5931\u6557\u3002";
+            case "Timed out waiting for download.": return "\u7b49\u5f85\u4e0b\u8f09\u903e\u6642\u3002";
+            case "Route": return "\u8def\u7dda";
             case "Route number or destination": return "\u8def\u7dda\u865f\u78bc\u6216\u76ee\u7684\u5730";
             case "Chinese": return "\u4e2d\u6587";
-            case "English": return "English";
+            case "English": return "\u82f1\u6587";
+            case "No GitHub releases have been published yet.": return "\u5c1a\u672a\u767c\u4f48 GitHub \u7248\u672c\u3002";
+            case "Could not check releases. HTTP ": return "\u7121\u6cd5\u6aa2\u67e5\u7248\u672c\u3002HTTP ";
+            case "Could not check releases. ": return "\u7121\u6cd5\u6aa2\u67e5\u7248\u672c\u3002";
+            case "Release: ": return "\u767c\u4f48\u7248\u672c\uff1a";
+            case "Allow HK Bus to install unknown apps, then try again.": return "\u8acb\u5141\u8a31 HK Bus \u5b89\u88dd\u672a\u77e5\u4f86\u6e90\u61c9\u7528\u7a0b\u5f0f\uff0c\u7136\u5f8c\u518d\u8a66\u3002";
+            case "Downloading update...": return "\u6b63\u5728\u4e0b\u8f09\u66f4\u65b0...";
+            case "HK Bus update": return "HK Bus \u66f4\u65b0";
             default: return en;
         }
     }
@@ -2306,14 +2321,15 @@ public class MainActivity extends Activity {
     private View refreshContainer(ScrollView scroll) {
         FrameLayout container = new FrameLayout(this);
         container.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
-        TextView prompt = text(t("Release to refresh"), 14, TEXT, true);
-        prompt.setGravity(Gravity.CENTER);
-        prompt.setPadding(dp(18), 0, dp(18), 0);
+        FrameLayout prompt = new FrameLayout(this);
         prompt.setAlpha(0f);
-        prompt.setTranslationY(-dp(36));
-        prompt.setSingleLine(true);
-        prompt.setBackground(round(elevatedSurface(), dp(18), tint(BLUE, 0.34f)));
-        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(-2, dp(36), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        prompt.setTranslationY(-dp(48));
+        prompt.setBackground(round(elevatedSurface(), dp(22), tint(BLUE, 0.34f)));
+        ProgressBar spinner = new ProgressBar(this, null, android.R.attr.progressBarStyleSmall);
+        spinner.setIndeterminate(true);
+        if (Build.VERSION.SDK_INT >= 21) spinner.setIndeterminateTintList(ColorStateList.valueOf(tint(BLUE, 0.75f)));
+        prompt.addView(spinner, new FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER));
+        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         tp.setMargins(0, dp(8), 0, 0);
         container.addView(prompt, tp);
         refreshPrompt = prompt;
@@ -2322,10 +2338,11 @@ public class MainActivity extends Activity {
     }
 
     private class RefreshScrollView extends ScrollView {
-        private TextView prompt;
+        private View prompt;
         private final int touchSlop;
         private float downX = -1f;
         private float downY = -1f;
+        private float currentPull = 0f;
         private boolean pulling = false;
         private boolean triggered = false;
         private boolean childTouchCancelled = false;
@@ -2335,7 +2352,7 @@ public class MainActivity extends Activity {
             touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
         }
 
-        void setRefreshPrompt(TextView prompt) {
+        void setRefreshPrompt(View prompt) {
             this.prompt = prompt;
         }
 
@@ -2345,6 +2362,7 @@ public class MainActivity extends Activity {
                 case MotionEvent.ACTION_DOWN:
                     downX = event.getRawX();
                     downY = event.getRawY();
+                    currentPull = 0f;
                     pulling = false;
                     triggered = false;
                     childTouchCancelled = false;
@@ -2358,10 +2376,9 @@ public class MainActivity extends Activity {
                             cancelChildTouch(event);
                         }
                         if (pulling) {
-                            float pull = Math.min(dp(72), dy / 3f);
-                            if (pull > 0) {
-                                setTranslationY(pull);
-                                setRefreshPromptPull(prompt, pull / (float) dp(72));
+                            currentPull = Math.min(dp(72), Math.max(0f, dy / 3f));
+                            if (currentPull > 0) {
+                                setRefreshPromptPull(prompt, currentPull / (float) dp(72));
                                 return true;
                             }
                         }
@@ -2369,10 +2386,8 @@ public class MainActivity extends Activity {
                     break;
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
-                    float pulled = getTranslationY();
+                    float pulled = currentPull;
                     if (pulling || pulled > 0) {
-                        RefreshScrollView.this.animate().cancel();
-                        RefreshScrollView.this.animate().translationY(0).setDuration(260).setInterpolator(new DecelerateInterpolator()).start();
                         if (!triggered && pulled >= dp(42)) {
                             triggered = true;
                             showRefreshPrompt(prompt);
@@ -2383,6 +2398,7 @@ public class MainActivity extends Activity {
                     }
                     downX = -1f;
                     downY = -1f;
+                    currentPull = 0f;
                     pulling = false;
                     if (pulled > 0) return true;
                     break;
@@ -2400,26 +2416,25 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void setRefreshPromptPull(TextView prompt, float progress) {
+    private void setRefreshPromptPull(View prompt, float progress) {
         if (prompt == null) return;
         float p = Math.max(0f, Math.min(1f, progress));
         prompt.animate().cancel();
         prompt.setAlpha(p);
-        prompt.setTranslationY(-dp(36) + dp(36) * p);
+        prompt.setTranslationY(-dp(48) + dp(48) * p);
     }
 
-    private void showRefreshPrompt(TextView prompt) {
+    private void showRefreshPrompt(View prompt) {
         if (prompt == null) return;
         prompt.animate().cancel();
         prompt.animate().alpha(1f).translationY(0).setDuration(140).setInterpolator(new DecelerateInterpolator()).start();
         prompt.postDelayed(() -> hideRefreshPrompt(prompt), 650);
     }
 
-    private void hideRefreshPrompt(TextView prompt) {
+    private void hideRefreshPrompt(View prompt) {
         if (prompt == null) return;
-        prompt.animate().alpha(0f).translationY(-dp(36)).setDuration(220).setInterpolator(new DecelerateInterpolator()).start();
+        prompt.animate().alpha(0f).translationY(-dp(48)).setDuration(220).setInterpolator(new DecelerateInterpolator()).start();
     }
-
     private void refreshCurrentTab() {
         updateLocation();
         Toast.makeText(this, t("Refreshing"), Toast.LENGTH_SHORT).show();
@@ -2432,6 +2447,20 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void vibrateFabRelease() {
+        try {
+            Vibrator vibrator;
+            if (Build.VERSION.SDK_INT >= 31) {
+                VibratorManager manager = (VibratorManager) getSystemService(VibratorManager.class);
+                vibrator = manager == null ? null : manager.getDefaultVibrator();
+            } else {
+                vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
+            }
+            if (vibrator == null || !vibrator.hasVibrator()) return;
+            if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createOneShot(10, VibrationEffect.DEFAULT_AMPLITUDE));
+            else vibrator.vibrate(10);
+        } catch (Exception ignored) {}
+    }
     private void applyExpressivePress(View v) {
         v.setClickable(true);
         if (Build.VERSION.SDK_INT >= 23) v.setForeground(null);
@@ -2653,24 +2682,24 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     check.setEnabled(true);
                     if (finalApkUrl == null || finalApkUrl.length() == 0) {
-                        status.setText("Latest GitHub release has no APK asset.");
+                        status.setText(t("Latest GitHub release has no APK asset."));
                     } else if (!newer) {
-                        status.setText("You are already on the latest release: " + currentVersionName());
+                        status.setText(t("You are already on the latest release: ") + currentVersionName());
                     } else {
-                        status.setText("New release found: " + finalTag);
+                        status.setText(t("New release found: ") + finalTag);
                         showUpdateDownloadSheet(finalTag, finalApkName, finalApkUrl);
                     }
                 });
             } catch (HttpStatusException e) {
                 runOnUiThread(() -> {
                     check.setEnabled(true);
-                    if (e.code == 404) status.setText("No GitHub releases have been published yet.");
-                    else status.setText("Could not check releases. HTTP " + e.code);
+                    if (e.code == 404) status.setText(t("No GitHub releases have been published yet."));
+                    else status.setText(t("Could not check releases. HTTP ") + e.code);
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
                     check.setEnabled(true);
-                    status.setText("Could not check releases. " + e.getMessage());
+                    status.setText(t("Could not check releases. ") + e.getMessage());
                 });
             }
         });
@@ -2679,7 +2708,7 @@ public class MainActivity extends Activity {
     private void showUpdateDownloadSheet(String tag, String apkName, String apkUrl) {
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
-        body.addView(text("Release: " + tag, 16, TEXT, true));
+        body.addView(text(t("Release: ") + tag, 16, TEXT, true));
         TextView file = text(apkName, 14, MUTED, false);
         LinearLayout.LayoutParams fp = new LinearLayout.LayoutParams(-1, -2);
         fp.setMargins(0, dp(8), 0, dp(14));
@@ -2696,28 +2725,28 @@ public class MainActivity extends Activity {
 
     private void downloadAndInstallApk(String apkUrl, String apkName, TextView status) {
         if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
-            status.setText("Allow HK Bus to install unknown apps, then try again.");
+            status.setText(t("Allow HK Bus to install unknown apps, then try again."));
             Intent settings = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName()));
             startActivity(settings);
             return;
         }
-        status.setText("Downloading update...");
+        status.setText(t("Downloading update..."));
         io.execute(() -> {
             try {
                 DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
                 DownloadManager.Request request = new DownloadManager.Request(Uri.parse(apkUrl));
-                request.setTitle("HK Bus update");
+                request.setTitle(t("HK Bus update"));
                 request.setDescription(apkName);
                 request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
                 request.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, apkName);
                 long id = dm.enqueue(request);
                 Uri apkUri = waitForDownload(dm, id);
                 runOnUiThread(() -> {
-                    status.setText("Opening installer...");
+                    status.setText(t("Opening installer..."));
                     installApk(apkUri);
                 });
             } catch (Exception e) {
-                runOnUiThread(() -> status.setText("Download failed. " + e.getMessage()));
+                runOnUiThread(() -> status.setText(t("Download failed. ") + e.getMessage()));
             }
         });
     }
@@ -2799,7 +2828,7 @@ public class MainActivity extends Activity {
         body.setOrientation(LinearLayout.VERTICAL);
         for (int i = 0; i < options.length; i++) {
             final int index = i;
-            Button option = sheetButton(options[i]);
+            Button option = sheetButton(t(options[i]));
             option.setOnClickListener(v -> {
                 dismissSheet();
                 handler.onSelect(index, options[index]);
